@@ -1,28 +1,264 @@
-Hello World
+<!DOCTYPE html>
+<html lang="fi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GPX Analysis Web App</title>
+    <style>
+        body { font-family: sans-serif; margin: 1em; }
+        table { border-collapse: collapse; width: 100%; font-size: 0.9em; }
+        th, td { border: 1px solid #ccc; padding: 4px; }
+        th { background: #eee; }
+        h2 { margin-top: 1em; }
+    </style>
+</head>
+<body>
+    <h1>GPX Analysis Tool</h1>
+    <input type="file" id="fileInput" accept=".gpx" />
+    <div id="results"></div>
 
-Tradi
-<img src="https://www.geocache.fi/stat/year.php?la=&userid=24208&cachetype=1" border=0>
-Multi
-<img src="https://www.geocache.fi/stat/year.php?la=&userid=24208&cachetype=2" border=0>
-Mysse
-<img src="https://www.geocache.fi/stat/year.php?la=&userid=24208&cachetype=3" border=0>
-Letter
-<img src="https://www.geocache.fi/stat/year.php?la=&userid=24208&cachetype=4" border=0>
-Event
-<img src="https://www.geocache.fi/stat/year.php?la=&userid=24208&cachetype=5" border=0>
-Earth
-<img src="https://www.geocache.fi/stat/year.php?la=&userid=24208&cachetype=6" border=0>
-Virtu
-<img src="https://www.geocache.fi/stat/year.php?la=&userid=24208&cachetype=7" border=0>
-Webcam
-<img src="https://www.geocache.fi/stat/year.php?la=&userid=24208&cachetype=8" border=0>
-WIGO
-<img src="https://www.geocache.fi/stat/year.php?la=&userid=24208&cachetype=9" border=0>
-CCE
-<img src="https://www.geocache.fi/stat/year.php?la=&userid=24208&cachetype=10" border=0>
-Mega
-<img src="https://www.geocache.fi/stat/year.php?la=&userid=24208&cachetype=11" border=0>
-CITO
-<img src="https://www.geocache.fi/stat/year.php?la=&userid=24208&cachetype=12" border=0>
-GIGA
-<img src="https://www.geocache.fi/stat/year.php?la=&userid=24208&cachetype=13" border=0>
+    <script>
+        const ATTRIBUTE_NAMES = {
+            1: { value: "Dogs", icon: "dogs" },
+            2: { value: "Access or parking fee", icon: "fee" },
+            3: { value: "Climbing gear", icon: "rappelling" },
+            4: { value: "Boat", icon: "boat" },
+            5: { value: "Scuba gear", icon: "scuba" },
+            6: { value: "Recommended for kids", icon: "kids" },
+            7: { value: "Takes less than an hour", icon: "onehour" },
+            8: { value: "Scenic view", icon: "scenic" },
+            9: { value: "Significant Hike", icon: "hiking" },
+            10: { value: "Difficult climbing", icon: "climbing" },
+            11: { value: "May require wading", icon: "wading" },
+            12: { value: "May require swimming", icon: "swimming" },
+            13: { value: "Available at all times", icon: "available" },
+            14: { value: "Recommended at night", icon: "night" },
+            15: { value: "Available during winter", icon: "winter" },
+            17: { value: "Poisonous plants", icon: "poisonoak" },
+            18: { value: "Dangerous Animals", icon: "dangerousanimals" },
+            19: { value: "Ticks", icon: "ticks" },
+            20: { value: "Abandoned mines", icon: "mine" },
+            21: { value: "Cliff / falling rocks", icon: "cliff" },
+            22: { value: "Hunting", icon: "hunting" },
+            23: { value: "Dangerous area", icon: "danger" },
+            24: { value: "Wheelchair accessible", icon: "wheelchair" },
+            25: { value: "Parking available", icon: "parking" },
+            26: { value: "Public transportation", icon: "public" },
+            27: { value: "Drinking water nearby", icon: "water" },
+            28: { value: "Public restrooms nearby", icon: "restrooms" },
+            29: { value: "Telephone nearby", icon: "phone" },
+            30: { value: "Picnic tables nearby", icon: "picnic" },
+            31: { value: "Camping available", icon: "camping" },
+            32: { value: "Bicycles", icon: "bicycles" },
+            33: { value: "Motorcycles", icon: "motorcycles" },
+            34: { value: "Quads", icon: "quads" },
+            35: { value: "Off-road vehicles", icon: "jeeps" },
+            36: { value: "Snowmobiles", icon: "snowmobiles" },
+            37: { value: "Horses", icon: "horses" },
+            38: { value: "Campfires", icon: "campfires" },
+            39: { value: "Thorns", icon: "thorn" },
+            40: { value: "Stealth required", icon: "stealth" },
+            41: { value: "Stroller accessible", icon: "stroller" },
+            42: { value: "Needs Maintenance", icon: "firstaid" },
+            43: { value: "Watch for livestock", icon: "cow" },
+            44: { value: "Flashlight required", icon: "flashlight" },
+            45: { value: "Lost And Found Tour", icon: "landf" },
+            46: { value: "Truck Driver/RV", icon: "rv" },
+            47: { value: "Field Puzzle", icon: "field_puzzle" },
+            48: { value: "UV Light Required", icon: "UV" },
+            49: { value: "Snowshoes", icon: "snowshoes" },
+            50: { value: "Cross Country Skis", icon: "skiis" },
+            51: { value: "Special Tool Required", icon: "s-tool" },
+            52: { value: "Night Cache", icon: "nightcache" },
+            53: { value: "Park and Grab", icon: "parkngrab" },
+            54: { value: "Abandoned Structure", icon: "AbandonedBuilding" },
+            55: { value: "Short hike (less than 1km)", icon: "hike_short" },
+            56: { value: "Medium hike (1km-10km)", icon: "hike_med" },
+            57: { value: "Long Hike (+10km)", icon: "hike_long" },
+            58: { value: "Fuel Nearby", icon: "fuel" },
+            59: { value: "Food Nearby", icon: "food" },
+            60: { value: "Wireless Beacon", icon: "wirelessbeacon" },
+            61: { value: "Partnership Cache", icon: "partnership" },
+            62: { value: "Seasonal Access", icon: "seasonal" },
+            63: { value: "Tourist Friendly", icon: "touristOK" },
+            64: { value: "Tree Climbing", icon: "treeclimbing" },
+            65: { value: "Front Yard (Private Residence)", icon: "frontyard" },
+            66: { value: "Teamwork Required", icon: "teamwork" },
+            67: { value: "GeoTour", icon: "geotour" },
+            69: { value: "Bonus cache", icon: "bonuscache" },
+            70: { value: "Power trail", icon: "powertrail" },
+            71: { value: "Challenge cache", icon: "challengecache" },
+            72: { value: "Geocaching.com solution checker", icon: "hqsolutionchecker" },
+        };
+
+function parseGPX(file) {
+    const parser = new DOMParser();
+    const reader = new FileReader();
+
+    reader.onload = function(event) {
+        const xml = event.target.result;
+        const doc = parser.parseFromString(xml, "application/xml");
+        const ns = {
+            gpx: "http://www.topografix.com/GPX/1/0",
+            groundspeak: "http://www.groundspeak.com/cache/1/0/1",
+            gsak: "http://www.gsak.net/xmlv1/6"
+        };
+
+        const wpts = doc.getElementsByTagNameNS(ns.gpx, "wpt");
+        let total = 0;
+        const types = {};
+        const sizes = {};
+        const difficulties = {};
+        const terrains = {};
+        const diffTerrPairs = {};
+        const attributes = {};
+        const countries = new Set();
+        const states = new Set();
+        let oldestDate = null;
+        let favoSum = 0;
+        let attrib4Terrain5Found = false;
+        let attrib4_11_12Found = false;
+
+        for (let wpt of wpts) {
+            total++;
+            const cache = wpt.getElementsByTagNameNS(ns.groundspeak, "cache")[0];
+            if (!cache) continue;
+
+            // Type
+            const type = cache.getElementsByTagNameNS(ns.groundspeak, "type")[0]?.textContent || "?";
+            types[type] = (types[type] || 0) + 1;
+
+            // Size/Container
+            const container = cache.getElementsByTagNameNS(ns.groundspeak, "container")[0]?.textContent || "?";
+            sizes[container] = (sizes[container] || 0) + 1;
+
+            // Difficulty/Terrain
+            const difficulty = parseFloat(cache.getElementsByTagNameNS(ns.groundspeak, "difficulty")[0]?.textContent || "0");
+            const terrain = parseFloat(cache.getElementsByTagNameNS(ns.groundspeak, "terrain")[0]?.textContent || "0");
+            difficulties[difficulty] = (difficulties[difficulty] || 0) + 1;
+            terrains[terrain] = (terrains[terrain] || 0) + 1;
+            diffTerrPairs[`${difficulty}/${terrain}`] = (diffTerrPairs[`${difficulty}/${terrain}`] || 0) + 1;
+
+            // Date
+            const timeText = wpt.getElementsByTagName("time")[0]?.textContent;
+            if (timeText) {
+                const date = new Date(timeText);
+                if (!oldestDate || date < oldestDate) {
+                    oldestDate = date;
+                }
+            }
+
+            // Country/State
+            const country = cache.getElementsByTagNameNS(ns.groundspeak, "country")[0]?.textContent || "";
+            const state = cache.getElementsByTagNameNS(ns.groundspeak, "state")[0]?.textContent || "";
+            if (country.trim()) countries.add(country.trim());
+            if (state.trim()) states.add(state.trim());
+
+            // Attributes
+            const attSet = new Set();
+            const attParent = cache.getElementsByTagNameNS(ns.groundspeak, "attributes")[0];
+            if (attParent) {
+                const attElements = attParent.getElementsByTagNameNS(ns.groundspeak, "attribute");
+                for (let att of attElements) {
+                    const attId = parseInt(att.getAttribute("id"), 10);
+                    attSet.add(attId);
+                    attributes[attId] = (attributes[attId] || 0) + 1;
+                }
+            }
+
+            if (attSet.has(4) && terrain === 5.0) {
+                attrib4Terrain5Found = true;
+            }
+            if ([4, 11, 12].every(id => attSet.has(id))) {
+                attrib4_11_12Found = true;
+            }
+
+            // Favo points (gsak)
+            const wptExt = wpt.getElementsByTagNameNS(ns.gsak, "wptExtension")[0];
+            if (wptExt) {
+                const favElem = wptExt.getElementsByTagNameNS(ns.gsak, "FavPoints")[0];
+                if (favElem && !isNaN(favElem.textContent)) {
+                    favoSum += parseInt(favElem.textContent, 10);
+                }
+            }
+        }
+
+        displayResults({
+            total,
+            types,
+            sizes,
+            difficulties,
+            terrains,
+            diffTerrPairs,
+            attributes,
+            countries: Array.from(countries),
+            states: Array.from(states),
+            oldestDate,
+            attrib4Terrain5Found,
+            attrib4_11_12Found,
+            favoSum,
+        });
+    };
+
+    reader.readAsText(file);
+}
+
+function displayResults(stats) {
+    document.getElementById("results").innerHTML = `
+        <h2>Analysis Results</h2>
+        <p><strong>Total caches:</strong> ${stats.total}</p>
+        <p><strong>Oldest cache:</strong> ${stats.oldestDate ? stats.oldestDate.toISOString().slice(0,10) : "?"}</p>
+        <p><strong>Total favorite points:</strong> ${stats.favoSum}</p>
+        <h3>Cache Types</h3>
+        ${generateTable(stats.types, "Tyyppi", "Määrä")}
+        <h3>Koot</h3>
+        ${generateTable(stats.sizes, "Koko", "Määrä")}
+        <h3>Difficulty</h3>
+        ${generateTable(stats.difficulties, "Difficulty", "Määrä", true)}
+        <h3>Terrain</h3>
+        ${generateTable(stats.terrains, "Terrain", "Määrä", true)}
+        <h3>Difficulty / Terrain yhdistelmät</h3>
+        ${generateTable(stats.diffTerrPairs, "D/T", "Määrä", true)}
+        <h3>Attribuutit</h3>
+        ${generateAttribTable(stats.attributes)}
+        <h3>Erikoisehdot</h3>
+        <ul>
+            <li>Attribuutti 4 & Terrain 5: ${stats.attrib4Terrain5Found ? 'Kyllä' : 'Ei'}</li>
+            <li>Attribuutit 4 & 11 & 12: ${stats.attrib4_11_12Found ? 'Kyllä' : 'Ei'}</li>
+        </ul>
+        <h3>Maat ja alueet</h3>
+        <p><strong>Maat:</strong> ${stats.countries.join(", ")}</p>
+        <p><strong>Alueet:</strong> ${stats.states.join(", ")}</p>
+    `;
+}
+
+function generateTable(data, col1, col2, sortNumeric = false) {
+    let entries = Object.entries(data);
+    if (sortNumeric) {
+        entries = entries.sort((a, b) => parseFloat(a[0]) - parseFloat(b[0]));
+    } else {
+        entries = entries.sort();
+    }
+    const rows = entries.map(([key, value]) => `<tr><td>${key}</td><td>${value}</td></tr>`).join("");
+    return `<table><tr><th>${col1}</th><th>${col2}</th></tr>${rows}</table>`;
+}
+
+function generateAttribTable(attributes) {
+    const rows = Object.entries(attributes)
+        .sort((a, b) => parseInt(a[0]) - parseInt(b[0]))
+        .map(([aid, count]) => {
+            const info = ATTRIBUTE_NAMES[aid] || { value: "Tuntematon attribuutti", icon: "unknown" };
+            return `<tr><td>${aid}</td><td>${info.value}</td><td>${count}</td></tr>`;
+        }).join("");
+    return `<table><tr><th>ID</th><th>Nimi</th><th>Määrä</th></tr>${rows}</table>`;
+}
+
+document.getElementById("fileInput").addEventListener("change", function(event) {
+    const file = event.target.files[0];
+    if (file) {
+        parseGPX(file);
+    }
+});
+</script>
+</body>
+</html>
