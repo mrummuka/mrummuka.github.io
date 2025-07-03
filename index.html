@@ -376,9 +376,18 @@ function parseGPX(file) {
         let attrib4_11_12Found = false;
 
         for (let wpt of wpts) {
-            total++;
             const cache = wpt.getElementsByTagNameNS(ns.groundspeak, "cache")[0];
             if (!cache) continue;
+
+            // Type
+            const type = cache.getElementsByTagNameNS(ns.groundspeak, "type")[0]?.textContent || "?";
+            if (type === "User defined cache") {
+                continue; // Skip this cache
+            }
+
+            types[type] = (types[type] || 0) + 1;
+
+            total++;
 
             // Coords
             const lat = parseFloat(wpt.getAttribute("lat"));
@@ -392,9 +401,6 @@ function parseGPX(file) {
             // Name
             const name = cache.getElementsByTagNameNS(ns.groundspeak, "name")[0]?.textContent || "";
 
-            // Type
-            const type = cache.getElementsByTagNameNS(ns.groundspeak, "type")[0]?.textContent || "?";
-            types[type] = (types[type] || 0) + 1;
 
             // Size/Container
             const container = cache.getElementsByTagNameNS(ns.groundspeak, "container")[0]?.textContent || "?";
@@ -474,13 +480,18 @@ function parseGPX(file) {
             cacheList.push({
                 gccode,
                 name,
+                country,
+                region: state,
                 type,
+                size: container,
                 location: [country, state].filter(Boolean).join(" / "),
                 fp,
                 hidden,
                 difficulty,
                 terrain,
                 coords: [lat, lon],
+                lat,
+                lon,
                 attributes: Array.from(attSet).map(id => ({
                     id,
                     count: attributes[id] || 0
@@ -607,9 +618,41 @@ function displayResults(stats) {
             iconColor: 'white'
         });
 
+        stats.cacheList.forEach(cache => {
+            const greenGlobeIcon = L.AwesomeMarkers.icon({
+                icon: 'globe',
+                markerColor: 'green',
+                prefix: 'fa',
+                iconColor: 'white'
+            });
+
+            const popupHtml = `
+                <div style="width: 260px;">
+                    <b>Cache info:</b><br>
+                    <b>GCCode:</b> ${cache.gccode}<br>
+                    <b>Cache name:</b> ${cache.name}<br>
+                    <b>Country:</b> ${cache.country}<br>
+                    <b>Region:</b> ${cache.region}<br>
+                    <b>Difficulty:</b> ${cache.difficulty}<br>
+                    <b>Terrain:</b> ${cache.terrain}<br>
+                    <b>Favorite points:</b> ${cache.fp}<br>
+                    <b>Hidden:</b> ${cache.hidden ? cache.hidden.slice(0, 10) : ""}<br>
+                    <b>Latitude:</b> ${cache.lat}<br>
+                    <b>Longitude:</b> ${cache.lon}<br>
+                    <b>Size:</b> ${cache.size}<br>
+                    <b>Type:</b> ${cache.type}
+                </div>
+            `;
+
+            L.marker([cache.lat, cache.lon], {icon: greenGlobeIcon})
+                .addTo(map)
+                .bindPopup(popupHtml);
+        });
+        /*
         stats.cacheCoords.forEach(([lat, lon]) => {
             L.marker([lat, lon], {icon: greenGlobeIcon}).addTo(map);
         });
+        */
 
         // Fit map to markers
         const bounds = L.latLngBounds(stats.cacheCoords);
@@ -832,7 +875,7 @@ function generateHiddenDateHeatmap(cacheList) {
         html += `<td class="align-center" style="color: #000;">${val > 0 ? val : ""}</td>`;
     }
     html += `<td class="nobgcolor"></td></tr>`;
-    
+
     html += `</tbody></table>`;
     return html;
 }
