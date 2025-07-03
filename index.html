@@ -19,6 +19,25 @@
         .flex-row > div {
             min-width: 320px;
         }
+        .pstable-small {
+            font-size: 0.85em;
+            border-collapse: collapse;
+        }
+        .pstable-small th,
+        .pstable-small td {
+            padding: 1px 2px;
+            text-align: center;
+            vertical-align: middle;
+            min-width: 16px;
+            max-width: 22px;
+            width: 18px;
+        }
+        .pstable-small {
+            font-size: 0.85em;
+            border-collapse: collapse;
+        }
+        .pstable-small th,
+
     </style>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -337,10 +356,16 @@ function parseGPX(file) {
         const wpts = doc.getElementsByTagNameNS(ns.gpx, "wpt");
         let total = 0;
         let cacheCoords = [];
+        let cacheList = [];
         const types = {};
         const sizes = {};
         const difficulties = {};
         const terrains = {};
+        const hiddenDates = {};
+        const years = {};
+        const days = {};
+        const months = {};
+        const weekdays = {};
         const diffTerrPairs = {};
         const attributes = {};
         const countries = new Set();
@@ -362,6 +387,11 @@ function parseGPX(file) {
                 cacheCoords.push([lat, lon]);
             }
 
+            // Gccode
+            const gccode = wpt.getElementsByTagName("name")[0]?.textContent || "";
+            // Name
+            const name = cache.getElementsByTagNameNS(ns.groundspeak, "name")[0]?.textContent || "";
+
             // Type
             const type = cache.getElementsByTagNameNS(ns.groundspeak, "type")[0]?.textContent || "?";
             types[type] = (types[type] || 0) + 1;
@@ -377,10 +407,29 @@ function parseGPX(file) {
             terrains[terrain] = (terrains[terrain] || 0) + 1;
             diffTerrPairs[`${difficulty}/${terrain}`] = (diffTerrPairs[`${difficulty}/${terrain}`] || 0) + 1;
 
-            // Date
-            const timeText = wpt.getElementsByTagName("time")[0]?.textContent;
-            if (timeText) {
-                const date = new Date(timeText);
+            // Hidden date
+            const hidden = wpt.getElementsByTagName("time")[0]?.textContent || "";
+            hiddenDates[hidden] = (hiddenDates[hidden] || 0) + 1;
+
+            if (hidden) {
+                const date = new Date(hidden);
+
+                // Hidden year
+                const year = date.getFullYear();
+                years[year] = (years[year] || 0) + 1;
+
+                // Hidden day of month
+                const day = date.getDate();
+                days[day] = (days[day] || 0) + 1;
+                // Hidden month
+                const month = date.getMonth() + 1; // Months are 0-indexed
+                months[month] = (months[month] || 0) + 1;
+
+                // Hidden day of week
+                const weekday = date.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+                weekdays[weekday] = (weekdays[weekday] || 0) + 1;
+
+                // Oldest hidden date
                 if (!oldestDate || date < oldestDate) {
                     oldestDate = date;
                 }
@@ -412,23 +461,47 @@ function parseGPX(file) {
             }
 
             // Favo points (gsak)
+            let fp = 0;
             const wptExt = wpt.getElementsByTagNameNS(ns.gsak, "wptExtension")[0];
             if (wptExt) {
                 const favElem = wptExt.getElementsByTagNameNS(ns.gsak, "FavPoints")[0];
                 if (favElem && !isNaN(favElem.textContent)) {
-                    favoSum += parseInt(favElem.textContent, 10);
+                    fp = parseInt(favElem.textContent, 10);
+                    favoSum += fp;
                 }
             }
+
+            cacheList.push({
+                gccode,
+                name,
+                type,
+                location: [country, state].filter(Boolean).join(" / "),
+                fp,
+                hidden,
+                difficulty,
+                terrain,
+                coords: [lat, lon],
+                attributes: Array.from(attSet).map(id => ({
+                    id,
+                    count: attributes[id] || 0
+                }))
+            });
+
         }
 
         displayResults({
             cacheCoords,
+            cacheList,
             total,
             types,
             sizes,
             difficulties,
             terrains,
             diffTerrPairs,
+            years,
+            days,
+            months,
+            weekdays,
             attributes,
             countries: Array.from(countries),
             states: Array.from(states),
@@ -471,10 +544,39 @@ function displayResults(stats) {
             ${generateTable(stats.terrains, "Terrain", "Count", true)}
         </div>
     </div>
+        <div class="flex-row">
+        <div>
+            <h3>Finds by year cache placed</h3>
+            ${generateTable(stats.years, "Year", "Count", true)}
+        </div>
+        <div>
+            <h3>Finds by day of month cache placed</h3>
+            ${generateTable(stats.days, "Day", "Count", true)}
+        </div>
+    </div>
+        </div>
+        <div class="flex-row">
+        <div>
+            <h3>Finds by month cache placed</h3>
+            ${generateMonthTable(stats.months, "Month", "Count")}
+        </div>
+        <div>
+            <h3>Finds by day of week cache placed</h3>
+            ${generateWeekdayTable(stats.weekdays, "Day of week", "Count", true)}
+        </div>
+    </div>
         <h3>Difficulty / Terrain chart</h3>
         ${generateDTMatrix(stats.diffTerrPairs)}
+        <h3>Caches with most favorite points</h3>
+        ${generateTopFPTable(stats.cacheList)}
+        <h3>Oldest caches</h3>
+        ${generateOldestCachesTable(stats.cacheList)}
         <h3>Attributes</h3>
-        ${generateAttribTable(stats.attributes)}
+        ${generateAttribIconTable(stats.attributes)}
+        <h3>Finds by hidden date (month x day)</h3>
+        ${generateHiddenDateHeatmap(stats.cacheList)}
+        <h3>Finds by hidden month (year x month)</h3>
+        ${generateHiddenMonthHeatmap(stats.cacheList)}
         <h3>Special Conditions</h3>
         <ul>
             <li>Venekätkö (T5+Boat attribute): ${stats.attrib4Terrain5Found ? 'Kyllä' : 'Ei'}</li>
@@ -533,17 +635,70 @@ function generateTable(data, col1, col2, sortNumeric = false, isTypeTable = fals
         return `<tr><td>${displayKey}</td><td>${value}</td></tr>`;
     }).join("");    return `<table><tr><th>${col1}</th><th>${col2}</th></tr>${rows}</table>`;
 }
-/*
-function generateAttribTable(attributes) {
-    const rows = Object.entries(attributes)
-        .sort((a, b) => parseInt(a[0]) - parseInt(b[0]))
-        .map(([aid, count]) => {
-            const info = ATTRIBUTE_NAMES[aid] || { value: "Tuntematon attribuutti", icon: "unknown" };
-            return `<tr><td>${aid}</td><td>${info.value}</td><td>${count}</td></tr>`;
-        }).join("");
-    return `<table><tr><th>ID</th><th>Nimi</th><th>Määrä</th></tr>${rows}</table>`;
-}*/
 
+function generateMonthTable(data, col1, col2) {
+    let entries = Object.entries(data)
+        .map(([num, count]) => [
+            new Date(2000, num - 1, 1).toLocaleString('en-US', { month: 'long' }),
+            count
+        ])
+        .sort((a, b) => new Date(Date.parse(a[0] +" 1, 2000")) - new Date(Date.parse(b[0] +" 1, 2000")));
+    const rows = entries.map(([key, value]) => `<tr><td>${key}</td><td>${value}</td></tr>`).join("");
+    return `<table><tr><th>${col1}</th><th>${col2}</th></tr>${rows}</table>`;
+}
+
+function generateWeekdayTable(data, col1, col2) {
+    // Weekday order: Monday (1) to Sunday (0)
+    const weekdayOrder = [1,2,3,4,5,6,0];
+    const rows = weekdayOrder.map(num => {
+        const name = new Date(2000, 0, 2 + num - (num === 0 ? 7 : 0)).toLocaleString('en-US', { weekday: 'long' });
+        const value = data[num] || 0;
+        return `<tr><td>${name}</td><td>${value}</td></tr>`;
+    }).join("");
+    return `<table><tr><th>${col1}</th><th>${col2}</th></tr>${rows}</table>`;
+}
+
+function generateTopFPTable(cacheList) {
+    const top = cacheList
+        .filter(c => c.fp > 0)
+        .sort((a, b) => b.fp - a.fp)
+        .slice(0, 5);
+    const rows = top.map(c =>
+        `<tr>
+            <td>${c.gccode}</td>
+            <td>${c.name}</td>
+            <td>${c.type}</td>
+            <td>${c.location}</td>
+            <td>${c.fp}</td>
+        </tr>`
+    ).join("");
+    return `<table>
+        <tr><th>gccode</th><th>name</th><th>type</th><th>location</th><th>fp</th></tr>
+        ${rows}
+    </table>`;
+}
+
+function generateOldestCachesTable(cacheList) {
+    const top = cacheList
+        .filter(c => c.hidden)
+        .sort((a, b) => new Date(a.hidden) - new Date(b.hidden))
+        .slice(0, 5);
+    const rows = top.map(c =>
+        `<tr>
+            <td>${c.gccode}</td>
+            <td>${c.name}</td>
+            <td>${c.type}</td>
+            <td>${c.location}</td>
+            <td>${c.hidden ? c.hidden.slice(0,10) : ""}</td>
+        </tr>`
+    ).join("");
+    return `<table>
+        <tr><th>gccode</th><th>name</th><th>type</th><th>location</th><th>hidden</th></tr>
+        ${rows}
+    </table>`;
+}
+
+/*
 function generateAttribTable(attributes) {
     const rows = Object.entries(attributes)
         .sort((a, b) => parseInt(a[0]) - parseInt(b[0]))
@@ -560,6 +715,190 @@ function generateAttribTable(attributes) {
             </tr>`;
         }).join("");
     return `<table><tr><th>ID</th><th>Nimi</th><th>Määrä</th></tr>${rows}</table>`;
+}*/
+
+function generateAttribIconTable(attributes) {
+    // Show all attributes, even those with zero count
+    let attribArr = Object.entries(ATTRIBUTE_NAMES)
+        .map(([aid, info]) => ({
+            name: info.value,
+            icon: info.icon,
+            count: attributes[aid] || 0
+        }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+
+    const perRow = 20;
+    let html = `<table class="attributetable"><tbody>`;
+    for (let i = 0; i < attribArr.length; i += perRow) {
+        html += "<tr>";
+        for (let j = i; j < i + perRow && j < attribArr.length; j++) {
+            const a = attribArr[j];
+            html += `<td style="text-align:center;">
+                <img src="https://raw.githubusercontent.com/cgeo/cgeo/refs/heads/master/main/project/attributes/svgs/${a.icon}.svg"
+                     title="${a.name}" width="30" height="30" style="filter: invert(1);"><br>${a.count}
+            </td>`;
+        }
+        html += "</tr>";
+    }
+    html += "</tbody></table>";
+    return html;
+}
+
+function generateHiddenDateHeatmap(cacheList) {
+    // Prepare a 12x31 matrix for months (0-11) and days (0-30)
+    const counts = Array.from({length: 12}, () => Array(31).fill(0));
+    for (const cache of cacheList) {
+        if (!cache.hidden) continue;
+        const date = new Date(cache.hidden);
+        if (isNaN(date)) continue;
+        const m = date.getMonth(); // 0-11
+        const d = date.getDate();  // 1-31
+        counts[m][d-1]++;
+    }
+
+    // For each month, find min/max (nonzero) for color scaling
+    function getColor(val, min, max) {
+        if (val === 0) return "background-color: #eee; color: #888;";
+        // Color scale: dark green (#43a047) -> yellow (#bcc800) -> orange (#c88e00) -> red (#c86300)
+        // We'll interpolate between green (low), yellow (mid), red (high)
+        const green = [67, 160, 71];
+        const yellow = [188, 200, 0];
+        const orange = [200, 142, 0];
+        const red = [200, 99, 0];
+        if (max === min) return `background-color: rgb(${green.join(",")}); color: #fff;`;
+        let color;
+        if (val === max) {
+            color = red;
+        } else if (val === min) {
+            color = green;
+        } else {
+            // Interpolate: green -> yellow -> orange -> red
+            const ratio = (val - min) / (max - min);
+            if (ratio < 0.5) {
+                // green to yellow
+                const r = green.map((g, i) => Math.round(g + (yellow[i] - g) * (ratio * 2)));
+                color = r;
+            } else if (ratio < 0.8) {
+                // yellow to orange
+                const r = yellow.map((y, i) => Math.round(y + (orange[i] - y) * ((ratio - 0.5) / 0.3)));
+                color = r;
+            } else {
+                // orange to red
+                const r = orange.map((o, i) => Math.round(o + (red[i] - o) * ((ratio - 0.8) / 0.2)));
+                color = r;
+            }
+        }
+        return `background-color: rgb(${color.join(",")}); color: #fff;`;
+    }
+
+    const monthNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    let html = `<table class="pstable-small"><tbody>`;
+    // Header row
+    html += `<tr><td></td>`;
+    for (let d = 1; d <= 31; d++) html += `<td class="align-center"><b>${d}</b></td>`;
+    html += `<td class="nobgcolor"></td></tr>`;
+
+    // Data rows
+    for (let m = 0; m < 12; m++) {
+        // Find min/max for this month (nonzero)
+        const row = counts[m];
+        const nonzero = row.filter(v => v > 0);
+        const min = nonzero.length ? Math.min(...nonzero) : 0;
+        const max = nonzero.length ? Math.max(...nonzero) : 0;
+        let rowSum = 0;
+        html += `<tr><td><b>${monthNames[m]}</b></td>`;
+        for (let d = 0; d < 31; d++) {
+            const val = row[d];
+            if (val === 0) {
+                html += `<td class="align-center" style="background-color: #eee; color: #888;"></td>`;
+            } else {
+                html += `<td class="align-center" style="${getColor(val, min, max)}">${val}</td>`;
+                rowSum += val;
+            }
+        }
+        html += `<td class="align-right">${rowSum}</td></tr>`;
+    }
+
+    // Add column sums row
+    let colSums = Array(31).fill(0);
+    for (let m = 0; m < 12; m++) {
+        for (let d = 0; d < 31; d++) {
+            colSums[d] += counts[m][d];
+        }
+    }
+    html += `<tr><td class="nobgcolor"></td>`;
+    for (let d = 0; d < 31; d++) {
+        const val = colSums[d];
+        html += `<td class="align-center" style="color: #000;">${val > 0 ? val : ""}</td>`;
+    }
+    html += `<td class="nobgcolor"></td></tr>`;
+    
+    html += `</tbody></table>`;
+    return html;
+}
+
+function generateHiddenMonthHeatmap(cacheList) {
+    // Prepare a year x month matrix
+    const monthNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    const yearSet = new Set();
+    const counts = {};
+
+    // Collect counts and years
+    for (const cache of cacheList) {
+        if (!cache.hidden) continue;
+        const date = new Date(cache.hidden);
+        if (isNaN(date)) continue;
+        const y = date.getFullYear();
+        const m = date.getMonth(); // 0-11
+        yearSet.add(y);
+        if (!counts[y]) counts[y] = Array(12).fill(0);
+        counts[y][m]++;
+    }
+
+    // Get all years from 2000 to current year
+    const currentYear = new Date().getFullYear();
+    const years = [];
+    for (let y = 2000; y <= currentYear; y++) years.push(y);
+
+    // Color scale function (per row)
+    function getColor(val, min, max) {
+        if (val === 0) return "background-color: #eee; color: #888;";
+        // Green (#14c800) to Red (#c86300)
+        const green = [20, 200, 0];
+        const red = [200, 99, 0];
+        if (max === min) return `background-color: rgb(${green.join(",")}); color: #fff;`;
+        const ratio = (val - min) / (max - min);
+        const color = green.map((g, i) => Math.round(g + (red[i] - g) * ratio));
+        return `background-color: rgb(${color.join(",")}); color: #fff;`;
+    }
+
+    let html = `<table class="pstable-small"><tbody>`;
+    // Header row
+    html += `<tr><th></th>`;
+    for (let m = 0; m < 12; m++) html += `<th class="align-center"><b>${monthNames[m]}</b></th>`;
+    html += `<th class="align-right"></th></tr>`;
+
+    // Data rows
+    for (const y of years) {
+        const row = counts[y] || Array(12).fill(0);
+        const nonzero = row.filter(v => v > 0);
+        const min = nonzero.length ? Math.min(...nonzero) : 0;
+        const max = nonzero.length ? Math.max(...nonzero) : 0;
+        let rowSum = 0;
+        html += `<tr><td><b>${y}</b></td>`;
+        for (let m = 0; m < 12; m++) {
+            const val = row[m];
+            if (val === 0) {
+                html += `<td class="align-center" style="background-color: #eee; color: #888;"></td>`;
+            } else {
+                html += `<td class="align-center" style="${getColor(val, min, max)}">${val}</td>`;
+                rowSum += val;
+            }
+        }
+        html += `<td class="align-right">${rowSum}</td></tr>`;
+    }
+    html += `</tbody></table>`;
+    return html;
 }
 
 function interpolateColor(val, min, max) {
