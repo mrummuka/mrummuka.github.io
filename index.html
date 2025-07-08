@@ -952,7 +952,7 @@ function generateHiddenDateHeatmap(cacheList) {
     html += `<tr><td class="nobgcolor"></td>`;
     for (let d = 0; d < 31; d++) {
         const val = colSums[d];
-        html += `<td class="align-center" style="color: #000;">${val > 0 ? val : ""}</td>`;
+        html += `<td class="align-center" style="color: #000;">${val}</td>`;
     }
     html += `<td class="nobgcolor"></td></tr>`;
 
@@ -1032,7 +1032,7 @@ function generateHiddenMonthHeatmap(cacheList) {
     html += `<tr><td class="nobgcolor"></td>`;
     for (let m = 0; m < 12; m++) {
         const val = colSums[m];
-        html += `<td class="align-center" style="color: #000;">${val > 0 ? val : ""}</td>`;
+        html += `<td class="align-center" style="color: #000;">${val}</td>`;
     }
     html += `<td class="nobgcolor"></td></tr>`;
     
