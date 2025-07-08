@@ -52,12 +52,6 @@
             max-width: 22px;
             width: 18px;
         }
-        .pstable-small {
-            font-size: 0.85em;
-            border-collapse: collapse;
-        }
-        .pstable-small th,
-
     </style>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -334,12 +328,12 @@
             72: { value: "Geocaching.com solution checker", icon: "hqsolutionchecker" },
         };
 
-        const TYPE_ICON_IDS = {
+        const TYPE_NAMES_ICONS = {
             "Earthcache": "type_earth",
             "Virtual Cache": "type_virtual",
             "Letterbox Hybrid": "type_letterbox",
             "Traditional Cache": "type_traditional",
-            "Multi Cache": "type_multi",
+            "Multi-cache": "type_multi",
             "Wherigo Cache": "type_wherigo",
             "Webcam Cache": "type_webcam",
             "Event Cache": "type_event",
@@ -357,8 +351,31 @@
             // Add more as needed
         };
 
-        const ATTRIBUTE_URL = "https://github.com/cgeo/cgeo/tree/master/main/project/attributes/svgs/";
+        const TYPE_NAMES_FILTER = {
+            "Earthcache": "Earthcache",
+            "Virtual Cache": "Virtual Cache",
+            "Letterbox Hybrid": "Letterbox Hybrid",
+            "Traditional Cache": "Traditional Cache",
+            "Multi-cache": "Multi-cache",
+            "Wherigo Cache": "Wherigo Cache",
+            "Unknown Cache": "Unknown Cache",
+            // Add more as needed
+        };
 
+        const SIZE_NAMES = {
+            "Micro": "Micro",
+            "Small": "Small",
+            "Regular": "Regular",
+            "Large": "Large",
+            "Other": "Other",
+            "Virtual": "Virtual",
+            "Not Chosen": "Not Chosen",
+            // ...add all sizes you use...
+        };
+
+        const ATTRIBUTE_URL = "https://github.com/cgeo/cgeo/tree/master/main/project/attributes/svgs/";
+        let dtTypeFilter = null; // null means no filter
+        let dtSizeFilter = null;
 
 function parseGPX(file) {
     const parser = new DOMParser();
@@ -399,7 +416,7 @@ function parseGPX(file) {
         /*
         // Pre-fill types with zeros to always show all types
         // commented out since this might be more useful to implement as toggle option
-        Object.keys(TYPE_ICON_IDS).forEach(type => {
+        Object.keys(TYPE_NAMES_ICONS).forEach(type => {
             types[type] = 0;
         });
         */
@@ -414,8 +431,8 @@ function parseGPX(file) {
                 continue; // Skip this cache
             }
 
-            // Validate type against TYPE_NAMES
-            if (!TYPE_ICON_IDS.hasOwnProperty(type)) {
+            // Validate type against TYPE_NAMES_ICONS
+            if (!TYPE_NAMES_ICONS.hasOwnProperty(type)) {
                 // Optionally: skip this cache, or set to "Unknown", or log a warning
                 continue; // to skip
                 console.warn(`Skipping unexpected cache type: "${type}"`);
@@ -620,7 +637,7 @@ function displayResults(stats) {
         </div>
     </div>
         <h3>Difficulty / Terrain chart</h3>
-        ${generateDTMatrix(stats.diffTerrPairs)}
+        <div id="dt-matrix-container"></div>
         <h3>Caches with most favorite points</h3>
         ${generateTopFPTable(stats.cacheList)}
         <h3>Oldest caches</h3>
@@ -638,6 +655,7 @@ function displayResults(stats) {
             <li>Caches with Boat+Swim+Wading attributes: ${stats.boatSwimWadingCaches}</li>
         </ul>
     `;
+    renderDTMatrix(stats);
     // Remove any previous map instance
     if (window._leafletMap) {
         window._leafletMap.remove();
@@ -734,7 +752,7 @@ function generateTable(data, col1, col2, sortNumeric = false, isTypeTable = fals
  const rows = entries.map(([key, value]) => {
         let displayKey = key;
         if (isTypeTable) {
-            const iconId = TYPE_ICON_IDS[key];
+            const iconId = TYPE_NAMES_ICONS[key];
             displayKey = `<svg height="20" width="20" style="vertical-align:middle;margin-right:4px;">
                 <use href="#${iconId}"></use>
             </svg>${key}`;
@@ -1043,10 +1061,55 @@ function interpolateColor(val, min, max) {
     return `rgb(${color.join(",")})`;
 }
 
-function generateDTMatrix(diffTerrPairs) {
+function renderDTMatrix(stats) {
+    document.getElementById('dt-matrix-container').innerHTML = generateDTMatrix(
+        stats.cacheList, dtTypeFilter, dtSizeFilter
+    );
+
+    const allTypes = ['-'].concat(Object.keys(TYPE_NAMES_FILTER));
+    const allSizes = ['-'].concat(Object.keys(SIZE_NAMES));
+
+    const typeFilterCell = document.getElementById('dt-type-filter');
+    if (typeFilterCell) {
+        typeFilterCell.onclick = function() {
+            let idx = allTypes.indexOf(dtTypeFilter || '-');
+            idx = (idx + 1) % allTypes.length;
+            dtTypeFilter = allTypes[idx] === '-' ? null : allTypes[idx];
+            renderDTMatrix(stats); // Only redraw the D/T table
+        };
+    }
+    const sizeFilterCell = document.getElementById('dt-size-filter');
+    if (sizeFilterCell) {
+        sizeFilterCell.onclick = function() {
+            let idx = allSizes.indexOf(dtSizeFilter || '-');
+            idx = (idx + 1) % allSizes.length;
+            dtSizeFilter = allSizes[idx] === '-' ? null : allSizes[idx];
+            renderDTMatrix(stats); // Only redraw the D/T table
+        };
+    }
+}
+
+
+// Updated code to handle type and size filters
+function generateDTMatrix(cacheList, typeFilter = null, sizeFilter = null) {
     const values = [1.0,1.5,2.0,2.5,3.0,3.5,4.0,4.5,5.0];
+
+    // Filter caches by type and size if filters are set
+    const filtered = cacheList.filter(c =>
+        (!typeFilter || c.type === typeFilter) &&
+        (!sizeFilter || c.size === sizeFilter)
+    );
+
+    // Build D/T pairs as in original approach
+    const diffTerrPairs = {};
+    for (let c of filtered) {
+        const key = `${c.difficulty}/${c.terrain}`;
+        diffTerrPairs[key] = (diffTerrPairs[key] || 0) + 1;
+    }
+
     // Gather all nonzero counts for color scaling
     let allCounts = [];
+
     for (let d of values) for (let t of values) {
         const key = `${d}/${t}`;
         const count = diffTerrPairs[key] || 0;
@@ -1055,7 +1118,15 @@ function generateDTMatrix(diffTerrPairs) {
     const min = Math.min(...allCounts);
     const max = Math.max(...allCounts);
 
-    let html = `<table class="dttable"><tr><th>D \\ T</th>`;
+    // Build filter row
+    let html = `<table class="dttable">
+    <tr>
+      <th colspan="6" style="cursor:pointer" id="dt-type-filter">Type: ${typeFilter || '-'}</th>
+      <th colspan="6" style="cursor:pointer" id="dt-size-filter">Size: ${sizeFilter || '-'}</th>
+    </tr>`;
+
+    // Header row
+    html += `<tr><th>D \\ T</th>`;
     for (const t of values) html += `<th>${t.toFixed(1)}</th>`;
     html += `<th>Total</th></tr>`;
 
