@@ -288,13 +288,13 @@
             45: { value: "Lost And Found Tour", icon: "landf" },
             46: { value: "Truck Driver/RV", icon: "rv" },
             47: { value: "Field Puzzle", icon: "field_puzzle" },
-            48: { value: "UV Light Required", icon: "UV" },
+            48: { value: "UV Light Required", icon: "uv" },
             49: { value: "Snowshoes", icon: "snowshoes" },
             50: { value: "Cross Country Skis", icon: "skiis" },
-            51: { value: "Special Tool Required", icon: "s-tool" },
+            51: { value: "Special Tool Required", icon: "s_tool" },
             52: { value: "Night Cache", icon: "nightcache" },
             53: { value: "Park and Grab", icon: "parkngrab" },
-            54: { value: "Abandoned Structure", icon: "AbandonedBuilding" },
+            54: { value: "Abandoned Structure", icon: "abandonedbuilding" },
             55: { value: "Short hike (less than 1km)", icon: "hike_short" },
             56: { value: "Medium hike (1km-10km)", icon: "hike_med" },
             57: { value: "Long Hike (+10km)", icon: "hike_long" },
@@ -303,7 +303,7 @@
             60: { value: "Wireless Beacon", icon: "wirelessbeacon" },
             61: { value: "Partnership Cache", icon: "partnership" },
             62: { value: "Seasonal Access", icon: "seasonal" },
-            63: { value: "Tourist Friendly", icon: "touristOK" },
+            63: { value: "Tourist Friendly", icon: "touristok" },
             64: { value: "Tree Climbing", icon: "treeclimbing" },
             65: { value: "Front Yard (Private Residence)", icon: "frontyard" },
             66: { value: "Teamwork Required", icon: "teamwork" },
@@ -375,6 +375,14 @@ function parseGPX(file) {
         let attrib4Terrain5Found = false;
         let attrib4_11_12Found = false;
 
+        /*
+        // Pre-fill types with zeros to always show all types
+        // commented out since this might be more useful to implement as toggle option
+        Object.keys(TYPE_ICON_IDS).forEach(type => {
+            types[type] = 0;
+        });
+        */
+
         for (let wpt of wpts) {
             const cache = wpt.getElementsByTagNameNS(ns.groundspeak, "cache")[0];
             if (!cache) continue;
@@ -383,6 +391,13 @@ function parseGPX(file) {
             const type = cache.getElementsByTagNameNS(ns.groundspeak, "type")[0]?.textContent || "?";
             if (type === "User defined cache") {
                 continue; // Skip this cache
+            }
+
+            // Validate type against TYPE_NAMES
+            if (!TYPE_ICON_IDS.hasOwnProperty(type)) {
+                // Optionally: skip this cache, or set to "Unknown", or log a warning
+                continue; // to skip
+                console.warn(`Skipping unexpected cache type: "${type}"`);
             }
 
             types[type] = (types[type] || 0) + 1;
@@ -590,8 +605,8 @@ function displayResults(stats) {
         ${generateHiddenMonthHeatmap(stats.cacheList)}
         <h3>Special Conditions</h3>
         <ul>
-            <li>Venekätkö (T5+Boat attribute): ${stats.attrib4Terrain5Found ? 'Kyllä' : 'Ei'}</li>
-            <li>Vesikätkö (Boat+Swim+Wade attributes): ${stats.attrib4_11_12Found ? 'Kyllä' : 'Ei'}</li>
+            <li>Cache with T5+Boat attribute: ${stats.attrib4Terrain5Found ? 'Yes' : 'No'}</li>
+            <li>Cache Boat+Swim+Wading attributes: ${stats.attrib4_11_12Found ? 'Yes' : 'No'}</li>
         </ul>
     `;
     // Remove any previous map instance
@@ -618,6 +633,9 @@ function displayResults(stats) {
             iconColor: 'white'
         });
 
+        const foundCountries = new Set();
+        const foundRegions = new Set();
+
         stats.cacheList.forEach(cache => {
             const greenGlobeIcon = L.AwesomeMarkers.icon({
                 icon: 'globe',
@@ -625,6 +643,9 @@ function displayResults(stats) {
                 prefix: 'fa',
                 iconColor: 'white'
             });
+
+            if (cache.country) foundCountries.add(cache.country.trim());
+            if (cache.country && cache.region) foundRegions.add(`${cache.country.trim()}|${cache.region.trim()}`);
 
             const popupHtml = `
                 <div style="width: 260px;">
@@ -657,6 +678,20 @@ function displayResults(stats) {
         // Fit map to markers
         const bounds = L.latLngBounds(stats.cacheCoords);
         map.fitBounds(bounds, {padding: [20, 20]});
+
+        // 2. Highlight countries
+        fetch('https://raw.githubusercontent.com/datasets/geo-countries/master/data/countries.geojson')
+            .then(response => response.json())
+            .then(countriesGeoJson => {
+                L.geoJSON(countriesGeoJson, {
+                    style: feature => {
+                        const countryName = feature.properties.ADMIN || feature.properties.NAME || "";
+                        return foundCountries.has(countryName)
+                            ? { color: '#e53935', weight: 2, fillOpacity: 0.2 }
+                            : { color: '#888', weight: 0.5, fillOpacity: 0 };
+                    }
+                }).addTo(map);
+            });
     }
 }
 
@@ -940,6 +975,22 @@ function generateHiddenMonthHeatmap(cacheList) {
         }
         html += `<td class="align-right">${rowSum}</td></tr>`;
     }
+
+    // Add column sums row
+    let colSums = Array(12).fill(0);
+    for (const y of years) {
+        const row = counts[y] || Array(12).fill(0);
+        for (let m = 0; m < 12; m++) {
+            colSums[m] += row[m];
+        }
+    }
+    html += `<tr><td class="nobgcolor"></td>`;
+    for (let m = 0; m < 12; m++) {
+        const val = colSums[m];
+        html += `<td class="align-center" style="color: #000;">${val > 0 ? val : ""}</td>`;
+    }
+    html += `<td class="nobgcolor"></td></tr>`;
+    
     html += `</tbody></table>`;
     return html;
 }
@@ -979,7 +1030,7 @@ function generateDTMatrix(diffTerrPairs) {
 
     let html = `<table><tr><th>D \\ T</th>`;
     for (const t of values) html += `<th>${t.toFixed(1)}</th>`;
-    html += `<th>Yht.</th></tr>`;
+    html += `<th>Total</th></tr>`;
 
     let colTotals = Array(values.length).fill(0);
     let grandTotal = 0;
@@ -1002,7 +1053,7 @@ function generateDTMatrix(diffTerrPairs) {
         }
         html += `<td><b>${rowTotal}</b></td></tr>`;
     }
-    html += `<tr><th>Yht.</th>`;
+    html += `<tr><th>Total</th>`;
     for (const total of colTotals) html += `<td><b>${total}</b></td>`;
     html += `<td><b>${grandTotal}</b></td></tr>`;
     html += `</table>`;
