@@ -16,8 +16,28 @@
             align-items: flex-start;
             flex-wrap: wrap;
         }
+        .dttable th, .dttable td {
+            text-align: center;
+            vertical-align: middle;
+        }
         .flex-row > div {
             min-width: 320px;
+        }
+                .attributetable {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(48px, 1fr));
+            gap: 4px;
+            justify-items: center;
+            align-items: center;
+            max-width: 100%;
+        }
+        .attribcell {
+            text-align: center;
+            padding: 2px;
+            background: none;
+        }
+        .attribcell.bg-grey {
+            background: #eee;
         }
         .pstable-small {
             font-size: 0.85em;
@@ -330,10 +350,10 @@
             "Adventure Lab": "type_advlab",
             "HQ Event": "type_specialevent",
             "Community Celebration Event": "type_specialevent",
-            "Locationless (Reverse) Cache": "type_virtual",
-            "Project APE Cache": "type_traditional",
-            "GPS Adventures Exhibit": "type_traditional",
-            "Geocaching HQ": "type_cgeo",
+            "Locationless (Reverse) Cache": "type_locationless",
+            "Project APE Cache": "type_ape",
+            "GPS Adventures Exhibit": "type_maze",
+            "Geocaching HQ": "type_hq",
             // Add more as needed
         };
 
@@ -372,8 +392,9 @@ function parseGPX(file) {
         const states = new Set();
         let oldestDate = null;
         let favoSum = 0;
-        let attrib4Terrain5Found = false;
-        let attrib4_11_12Found = false;
+        let t5BoatCaches = 0;
+        let tbelow5BoatCaches = 0;
+        let boatSwimWadingCaches = 0;
 
         /*
         // Pre-fill types with zeros to always show all types
@@ -473,12 +494,18 @@ function parseGPX(file) {
                     attributes[attId] = (attributes[attId] || 0) + 1;
                 }
             }
-
-            if (attSet.has(4) && terrain === 5.0) {
-                attrib4Terrain5Found = true;
+            // Special conditions
+            // T<5 + Boat attribute
+            if (attSet.has(4) && terrain !== 5.0) {
+                tbelow5BoatCaches++;
             }
+            // T5 + Boat attribute
+            if (attSet.has(4) && terrain === 5.0) {
+                t5BoatCaches++;
+            }
+            // Boat + Swim + Wading attributes
             if ([4, 11, 12].every(id => attSet.has(id))) {
-                attrib4_11_12Found = true;
+                boatSwimWadingCaches++; 
             }
 
             // Favo points (gsak)
@@ -532,8 +559,9 @@ function parseGPX(file) {
             countries: Array.from(countries),
             states: Array.from(states),
             oldestDate,
-            attrib4Terrain5Found,
-            attrib4_11_12Found,
+            t5BoatCaches,
+            tbelow5BoatCaches,
+            boatSwimWadingCaches,
             favoSum,
         });
     };
@@ -605,8 +633,9 @@ function displayResults(stats) {
         ${generateHiddenMonthHeatmap(stats.cacheList)}
         <h3>Special Conditions</h3>
         <ul>
-            <li>Cache with T5+Boat attribute: ${stats.attrib4Terrain5Found ? 'Yes' : 'No'}</li>
-            <li>Cache Boat+Swim+Wading attributes: ${stats.attrib4_11_12Found ? 'Yes' : 'No'}</li>
+            <li>Caches with T5+Boat attribute: ${stats.t5BoatCaches}</li>
+            <li>Caches with T<5+Boat attribute: ${stats.tbelow5BoatCaches}</li>
+            <li>Caches with Boat+Swim+Wading attributes: ${stats.boatSwimWadingCaches}</li>
         </ul>
     `;
     // Remove any previous map instance
@@ -805,19 +834,17 @@ function generateAttribIconTable(attributes) {
         }))
         .sort((a, b) => a.name.localeCompare(b.name));
 
-    const perRow = 20;
-    let html = `<table class="attributetable"><tbody>`;
-    for (let i = 0; i < attribArr.length; i += perRow) {
-        html += "<tr>";
-        for (let j = i; j < i + perRow && j < attribArr.length; j++) {
-            const a = attribArr[j];
-            html += `<td style="text-align:center;">
+    let html = `<div class="attributetable">`;
+        attribArr.forEach(a => {
+            const greyClass = a.count === 0 ? "bg-grey" : "";
+            html += `<div class="attribcell ${greyClass}">
                 <img src="https://raw.githubusercontent.com/cgeo/cgeo/refs/heads/master/main/project/attributes/svgs/${a.icon}.svg"
-                     title="${a.name}" width="30" height="30" style="filter: invert(1);"><br>${a.count}
-            </td>`;
-        }
-        html += "</tr>";
-    }
+                    title="${a.name}" width="30" height="30" style="filter: invert(1);"><br>${a.count}
+            </div>`;
+        });
+        html += `</div>`;
+
+
     html += "</tbody></table>";
     return html;
 }
@@ -1028,7 +1055,7 @@ function generateDTMatrix(diffTerrPairs) {
     const min = Math.min(...allCounts);
     const max = Math.max(...allCounts);
 
-    let html = `<table><tr><th>D \\ T</th>`;
+    let html = `<table class="dttable"><tr><th>D \\ T</th>`;
     for (const t of values) html += `<th>${t.toFixed(1)}</th>`;
     html += `<th>Total</th></tr>`;
 
