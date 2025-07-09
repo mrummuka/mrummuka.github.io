@@ -52,6 +52,20 @@
             max-width: 22px;
             width: 18px;
         }
+        .leaflet-control-zoom-reset {
+            font-size: 18px;
+            line-height: 26px;
+            text-align: center;
+            background: #fff;
+            color: #000;
+            display: block;
+            width: 26px;
+            height: 26px;
+            border-radius: 2px;
+            box-shadow: 0 1px 5px rgba(0,0,0,0.65);
+            margin-top: 2px;
+            text-decoration: none;
+        }
     </style>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -775,6 +789,7 @@ function displayResults(stats) {
                 .addTo(map)
                 .bindPopup(popupHtml);
         });
+
         /*
         stats.cacheCoords.forEach(([lat, lon]) => {
             L.marker([lat, lon], {icon: greenGlobeIcon}).addTo(map);
@@ -784,6 +799,25 @@ function displayResults(stats) {
         // Fit map to markers
         const bounds = L.latLngBounds(stats.cacheCoords);
         map.fitBounds(bounds, {padding: [20, 20]});
+
+        function addResetViewButton(map) {
+            const controlContainer = map.zoomControl._container;
+
+            const button = L.DomUtil.create('a', 'leaflet-control-zoom-reset', controlContainer);
+            button.innerHTML = '⤾'; // Vaihtoehtoisesti: '↺', '🔄', 'Reset'
+            button.href = '#';
+            button.title = 'Reset view';
+
+            L.DomEvent.on(button, 'click', function(e) {
+                L.DomEvent.preventDefault(e);
+                if (bounds) {
+                    map.fitBounds(bounds);
+                }
+            });
+        }
+
+        addResetViewButton(map);
+
 
         // 2. Highlight countries
         fetch('https://raw.githubusercontent.com/datasets/geo-countries/master/data/countries.geojson')
@@ -800,6 +834,7 @@ function displayResults(stats) {
             });
     }
 }
+
 
 function generateTable(data, col1, col2, sortNumeric = false, isTypeTable = false) {
     let entries = Object.entries(data);
