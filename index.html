@@ -369,7 +369,7 @@
             "Large": "Large",
             "Other": "Other",
             "Virtual": "Virtual",
-            "Not Chosen": "Not Chosen",
+            "Not chosen": "Not chosen",
             // ...add all sizes you use...
         };
 
@@ -381,7 +381,7 @@ function parseGPX(file) {
     const parser = new DOMParser();
     const reader = new FileReader();
 
-    reader.onload = function(event) {
+    reader.onload = async function(event) {
         const xml = event.target.result;
         const doc = parser.parseFromString(xml, "application/xml");
         const ns = {
@@ -394,6 +394,8 @@ function parseGPX(file) {
         let total = 0;
         let cacheCoords = [];
         let cacheList = [];
+        const latList = [];
+        const lonList = [];
         const types = {};
         const sizes = {};
         const difficulties = {};
@@ -412,6 +414,7 @@ function parseGPX(file) {
         let t5BoatCaches = 0;
         let tbelow5BoatCaches = 0;
         let boatSwimWadingCaches = 0;
+        let elevation = null;
 
         /*
         // Pre-fill types with zeros to always show all types
@@ -447,6 +450,8 @@ function parseGPX(file) {
             const lon = parseFloat(wpt.getAttribute("lon"));
             if (!isNaN(lat) && !isNaN(lon)) {
                 cacheCoords.push([lat, lon]);
+                latList.push(lat);
+                lonList.push(lon);
             }
 
             // Gccode
@@ -551,6 +556,7 @@ function parseGPX(file) {
                 coords: [lat, lon],
                 lat,
                 lon,
+                elevation: null,
                 attributes: Array.from(attSet).map(id => ({
                     id,
                     count: attributes[id] || 0
@@ -559,8 +565,18 @@ function parseGPX(file) {
 
         }
 
+         // 🌍 Haetaan korkeusarvot kaikille pisteille yhdellä kutsulla
+        let elevations = [];
+        if (latList.length > 0) {
+            elevations = await fetchElevationsInChunks(latList, lonList, 70); // voit säätää 50 tarvittaessa
+        }
+        cacheList.forEach((cache, i) => {
+            cache.elevation = elevations[i] ?? null;
+        });
+
         displayResults({
             cacheCoords,
+            elevation,
             cacheList,
             total,
             types,
@@ -585,6 +601,41 @@ function parseGPX(file) {
 
     reader.readAsText(file);
 }
+
+async function fetchElevationsInChunks(latList, lonList, chunkSize = 50) {
+    const elevationResults = [];
+    console.debug("Fetching elevations for", latList.length, "coordinates in chunks of", chunkSize);
+
+    for (let i = 0; i < latList.length; i += chunkSize) {
+        const latChunk = latList.slice(i, i + chunkSize);
+        const lonChunk = lonList.slice(i, i + chunkSize);
+
+        const latParam = latChunk.join(",");
+        const lonParam = lonChunk.join(",");
+
+        const url = `https://api.open-meteo.com/v1/elevation?latitude=${latParam}&longitude=${lonParam}`;
+
+        try {
+            const resp = await fetch(url);
+            const data = await resp.json();
+
+            if (Array.isArray(data.elevation)) {
+                elevationResults.push(...data.elevation);
+            } else {
+                console.warn("Unexpected elevation response:", data);
+                elevationResults.push(...new Array(latChunk.length).fill(null));
+            }
+        } catch (err) {
+            console.error("Elevation fetch failed:", err);
+            elevationResults.push(...new Array(latChunk.length).fill(null));
+        }
+    }
+    console.debug("Fetched elevations:", elevationResults.length, "results");
+    console.debug("Elevation results:", elevationResults);
+
+    return elevationResults;
+}
+
 
 function displayResults(stats) {
     document.getElementById("results").innerHTML = `
@@ -642,6 +693,8 @@ function displayResults(stats) {
         ${generateTopFPTable(stats.cacheList)}
         <h3>Oldest caches</h3>
         ${generateOldestCachesTable(stats.cacheList)}
+        <h2>Top & Bottom Elevation Caches</h2>
+        <div id="elevationTableContainer"></div>
         <h3>Attributes</h3>
         ${generateAttribIconTable(stats.attributes)}
         <h3>Finds by hidden date (month x day)</h3>
@@ -654,7 +707,10 @@ function displayResults(stats) {
             <li>Caches with T<5+Boat attribute: ${stats.tbelow5BoatCaches}</li>
             <li>Caches with Boat+Swim+Wading attributes: ${stats.boatSwimWadingCaches}</li>
         </ul>
+        <h3>Caches on map</h3>
     `;
+    renderTopBottomElevationTable(stats.cacheList);
+
     renderDTMatrix(stats);
     // Remove any previous map instance
     if (window._leafletMap) {
@@ -707,6 +763,7 @@ function displayResults(stats) {
                     <b>Hidden:</b> ${cache.hidden ? cache.hidden.slice(0, 10) : ""}<br>
                     <b>Latitude:</b> ${cache.lat}<br>
                     <b>Longitude:</b> ${cache.lon}<br>
+                    <b>Elevation:</b> ${cache.elevation}<br>
                     <b>Size:</b> ${cache.size}<br>
                     <b>Type:</b> ${cache.type}
                 </div>
@@ -1088,6 +1145,105 @@ function renderDTMatrix(stats) {
         };
     }
 }
+
+function renderTopBottomElevationTable(cacheList) {
+    const ISO_COUNTRIES = [
+    "AW", "AF", "AO", "AI", "AX", "AL", "AD", "AE", "AR", "AM", "AS", "AQ", "TF", "AG", "AU", "AT", "AZ", "BI", "BE",
+    "BJ", "BQ", "BF", "BD", "BG", "BH", "BS", "BA", "BL", "BY", "BZ", "BM", "BO", "BR", "BB", "BN", "BT", "BV", "BW",
+    "CF", "CA", "CC", "CH", "CL", "CN", "CI", "CM", "CD", "CG", "CK", "CO", "KM", "CV", "CR", "CU", "CW", "CX", "KY",
+    "CY", "CZ", "DE", "DJ", "DM", "DK", "DO", "DZ", "EC", "EG", "ER", "EH", "ES", "EE", "ET", "FI", "FJ", "FK", "FR",
+    "FO", "FM", "GA", "GB", "GE", "GG", "GH", "GI", "GN", "GP", "GM", "GW", "GQ", "GR", "GD", "GL", "GT", "GF", "GU",
+    "GY", "HK", "HM", "HN", "HR", "HT", "HU", "ID", "IM", "IN", "IO", "IE", "IR", "IQ", "IS", "IL", "IT", "JM", "JE",
+    "JO", "JP", "KZ", "KE", "KG", "KH", "KI", "KN", "KR", "KW", "LA", "LB", "LR", "LY", "LC", "LI", "LK", "LS", "LT",
+    "LU", "LV", "MO", "MF", "MA", "MC", "MD", "MG", "MV", "MX", "MH", "MK", "ML", "MT", "MM", "ME", "MN", "MP", "MZ",
+    "MR", "MS", "MQ", "MU", "MW", "MY", "YT", "NA", "NC", "NE", "NG", "NI", "NU", "NL", "NO", "NP", "NR", "NZ", "OM",
+    "PK", "PA", "PN", "PE", "PH", "PW", "PG", "PL", "PR", "KP", "PT", "PY", "PS", "PF", "QA", "RE", "RO", "RU", "RW",
+    "SA", "SD", "SN", "SG", "GS", "SH", "SJ", "SB", "SL", "SV", "SM", "SO", "PM", "RS", "SS", "ST", "SR", "SK", "SI",
+    "SE", "SZ", "SX", "SC", "SY", "TC", "TD", "TG", "TH", "TJ", "TK", "TM", "TL", "TO", "TT", "TN", "TR", "TV", "TW",
+    "TZ", "UG", "UA", "UM", "UY", "US", "UZ", "VA", "VC", "VE", "VG", "VI", "VN", "VU", "WF", "WS", "YE", "ZA", "ZM",
+    "ZW"
+];
+
+    const sorted = cacheList
+        .filter(c => typeof c.elevation === "number")
+        .sort((a, b) => b.elevation - a.elevation);
+
+    const top = sorted.slice(0, 5);
+    const bottom = sorted.slice(-5);
+
+    // Palauttaa maan ISO-koodin annetusta nimestä
+    function countryNameToCode(name) {
+        if (!name || typeof name !== "string") return null;
+        try {
+            const regionNames = new Intl.DisplayNames(["en"], { type: "region" });
+            const target = name.trim().toLowerCase();
+
+            for (let code of ISO_COUNTRIES) {
+                const displayName = regionNames.of(code);
+                if (displayName && displayName.toLowerCase() === target) {
+                    return code;
+                }
+            }
+        } catch (e) {
+            console.warn("Intl.DisplayNames is not supported:", e);
+        }
+        return null;
+}
+
+    // Palauttaa emoji-lipun ISO-koodista (esim. "FI" → 🇫🇮)
+    function getFlagEmojiFromCountryCode(code) {
+        if (!code || code.length !== 2) return "";
+        return code.toUpperCase().replace(/./g, c =>
+            String.fromCodePoint(0x1F1E6 + c.charCodeAt(0) - 65)
+        );
+    }
+
+    // Palauttaa emoji-lipun suoraan maan nimestä
+    function getFlagEmojiFromCountryName(name) {
+        const code = countryNameToCode(name);
+        return getFlagEmojiFromCountryCode(code);
+    }
+
+    const createRow = (cache) => {
+        const iconId = TYPE_NAMES_ICONS[cache.type] || "type_unknown";
+        const iconHtml = `<td class="align-center"><svg width="20" height="20"><use href="#${iconId}"/></svg></td>`;
+
+        const flag = getFlagEmojiFromCountryName(cache.country);
+        const locationText = `${flag ? flag + " " : ""}${cache.region || ""}`;
+
+        return `
+            <tr>
+                <td><a href="https://coord.info/${cache.gccode}">${cache.gccode}</a></td>
+                <td>${cache.name}</td>
+                ${iconHtml}
+                <td>${locationText}</td>
+                <td class="align-right"><b>${Math.round(cache.elevation)} m</b></td>
+            </tr>`;
+    };
+
+
+    const html = `
+        <table class="pstable">
+            <thead>
+                <tr>
+                    <th>Code</th>
+                    <th>Cache name</th>
+                    <th></th>
+                    <th>Location</th>
+                    <th>Elevation (approx.)</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${top.map(createRow).join("")}
+                <tr><td colspan="5" style="background:#eee;text-align:center;"><i>— ... —</i></td></tr>
+                ${bottom.map(createRow).join("")}
+            </tbody>
+        </table>
+    `;
+
+    document.getElementById("elevationTableContainer").innerHTML = html;
+}
+
 
 
 // Updated code to handle type and size filters
