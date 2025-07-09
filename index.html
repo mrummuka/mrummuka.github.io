@@ -252,7 +252,6 @@
     <h1>GPX Analysis Tool</h1>
     <input type="file" id="fileInput" accept=".gpx" />
     <div id="results"></div>
-    <div id="map" style="height: 400px; margin: 2em 0;"></div>
 
     <script>
         const ATTRIBUTE_NAMES = {
@@ -646,60 +645,63 @@ function displayResults(stats) {
         <h3>Countries and Regions</h3>
         <p><strong>Countries:</strong> ${stats.countries.join(", ")}</p>
         <p><strong>Regions:</strong> ${stats.states.join(", ")}</p>
+                <h3>Caches on map</h3>
+                    <div id="map" style="height: 400px; margin: 2em 0;"></div>
+
 <div class="flex-row">
         <div>
-            <h3>Finds by type</h3>
+            <h3>Types in gpx</h3>
             ${generateTable(stats.types, "Type", "Count", false, true)}
         </div>
         <div>
-            <h3>Finds by size</h3>
+            <h3>Sizes in gpx</h3>
             ${generateTable(stats.sizes, "Size", "Count")}
         </div>
     </div>
     <div class="flex-row">
         <div>
-            <h3>Finds by difficulty rating</h3>
+            <h3>Caches by difficulties</h3>
             ${generateTable(stats.difficulties, "Difficulty", "Count", true)}
         </div>
         <div>
-            <h3>Finds by terrain rating</h3>
+            <h3>Caches by terrains</h3>
             ${generateTable(stats.terrains, "Terrain", "Count", true)}
         </div>
     </div>
         <div class="flex-row">
         <div>
-            <h3>Finds by year cache placed</h3>
+            <h3>Caches by year hidden</h3>
             ${generateTable(stats.years, "Year", "Count", true)}
         </div>
         <div>
-            <h3>Finds by day of month cache placed</h3>
+            <h3>Caches by day of month hidden</h3>
             ${generateTable(stats.days, "Day", "Count", true)}
         </div>
     </div>
         </div>
         <div class="flex-row">
         <div>
-            <h3>Finds by month cache placed</h3>
+            <h3>Caches by month hidden</h3>
             ${generateMonthTable(stats.months, "Month", "Count")}
         </div>
         <div>
-            <h3>Finds by day of week cache placed</h3>
+            <h3>Caches by day of week hidden</h3>
             ${generateWeekdayTable(stats.weekdays, "Day of week", "Count", true)}
         </div>
     </div>
-        <h3>Difficulty / Terrain chart</h3>
+        <h3>Difficulty / Terrain combos</h3>
         <div id="dt-matrix-container"></div>
-        <h3>Caches with most favorite points</h3>
+        <h3>Top 5 favored caches (max fp)</h3>
         ${generateTopFPTable(stats.cacheList)}
-        <h3>Oldest caches</h3>
+        <h3>Top 5 oldest caches</h3>
         ${generateOldestCachesTable(stats.cacheList)}
-        <h2>Top & Bottom Elevation Caches</h2>
+        <h3>Top 5 & Bottom 5 elevation caches</h3>
         <div id="elevationTableContainer"></div>
-        <h3>Attributes</h3>
+        <h3>Cache attributes</h3>
         ${generateAttribIconTable(stats.attributes)}
-        <h3>Finds by hidden date (month x day)</h3>
+        <h3>Caches by hidden date (month vs day)</h3>
         ${generateHiddenDateHeatmap(stats.cacheList)}
-        <h3>Finds by hidden month (year x month)</h3>
+        <h3>Caches by hidden month (year vs month)</h3>
         ${generateHiddenMonthHeatmap(stats.cacheList)}
         <h3>Special Conditions</h3>
         <ul>
@@ -707,7 +709,7 @@ function displayResults(stats) {
             <li>Caches with T<5+Boat attribute: ${stats.tbelow5BoatCaches}</li>
             <li>Caches with Boat+Swim+Wading attributes: ${stats.boatSwimWadingCaches}</li>
         </ul>
-        <h3>Caches on map</h3>
+
     `;
     renderTopBottomElevationTable(stats.cacheList);
 
