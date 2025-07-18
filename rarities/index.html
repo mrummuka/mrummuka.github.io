@@ -618,6 +618,10 @@
         // Returns an array of selected cache objects with reasons for selection
         // Each object will have a 'Reasons' array explaining why it was selected
         function collectSelections(data) {
+            // Nollaa aiemmat valinnat ja syyt ennen uutta ajoa
+            data.forEach(row => row.Reasons = []);
+            selectedIDs.clear();
+
             const selected = [];
             function add(r, reason) {
                 if (r && !selectedIDs.has(r.ID)) {
@@ -625,7 +629,8 @@
                     selected.push(r);
                     selectedIDs.add(r.ID);
                 } else if (r) {
-                    const existing = selected.find(e => e.ID === r.ID);
+                    // Jos kätkö on jo valittu toisesta syystä, lisätään vain uusi syy
+                    const existing = allData.find(e => e.ID === r.ID);
                     addReason(existing, reason);
                 }
             }
@@ -709,9 +714,8 @@
             }).addTo(map);
 
             // Check which caches to show: all or only selected
-            const showAll = document.getElementById("showAll").checked;
             const showHeatmap = document.getElementById("showHeatmap").checked;
-            const rowsToShow = showAll ? allRows : selectedRows;
+            const rowsToShow = selectedRows; // Kartta näyttää aina taulukon filtteröidyn datan
 
             // Create bounds object to fit all markers/heat points
             const bounds = L.latLngBounds([]);
@@ -720,9 +724,11 @@
                 // Prepare heatmap points: [lat, lon, intensity]
                 const heatPoints = rowsToShow.map(r => [r.Latitude_dd, r.Longitude_dd, 0.6]).filter(p => p[0] && p[1]);
                 // Add heat layer to map
-                L.heatLayer(heatPoints, { radius: 25, blur: 15, maxZoom: 10 }).addTo(map);
-                // Extend bounds for each heat point
-                heatPoints.forEach(p => bounds.extend([p[0], p[1]]));
+                if (heatPoints.length > 0) {
+                    L.heatLayer(heatPoints, { radius: 25, blur: 15, maxZoom: 10 }).addTo(map);
+                    // Extend bounds for each heat point
+                    heatPoints.forEach(p => bounds.extend([p[0], p[1]]));
+                }
             } else {
                 // Add a marker for each cache
                 rowsToShow.forEach(row => {
@@ -774,7 +780,14 @@
             }
 
             // Fit map view to all markers/heat points
-            if (bounds.isValid()) map.fitBounds(bounds);
+            if (bounds.isValid()) {
+                map.fitBounds(bounds);
+            } else if (allRows.length > 0) {
+                 // Jos filtteröityjä rivejä ei ole, mutta dataa on, keskitä kaikkiin
+                const allBounds = L.latLngBounds(allRows.map(r => [r.Latitude_dd, r.Longitude_dd]).filter(c => c[0] && c[1]));
+                if(allBounds.isValid()) map.fitBounds(allBounds);
+            }
+
 
             function addResetViewButton(map) {
                 const controlContainer = map.zoomControl._container;
@@ -786,7 +799,7 @@
 
                 L.DomEvent.on(button, 'click', function(e) {
                     L.DomEvent.preventDefault(e);
-                    if (bounds) {
+                    if (bounds.isValid()) {
                         map.fitBounds(bounds);
                     }
                 });
@@ -852,12 +865,9 @@
         // tableSelector: CSS selector for the DataTable element
         function initDataTableFilters(tableSelector) {
             const table = $(tableSelector).DataTable();
-            const rangeCols = {
-                "Löydöt": 9,
-                "FP": 10,
-                "Korkeus": 11
-            };
-            const dateColIdx = 8; // Piilotettu
+            const rangeCols = { "Löydöt": 9, "FP": 10, "Korkeus": 11 };
+            const dateColIdx = 8; // Piilotettu-sarakkeen indeksi
+            const reasonsColIdx = 12; // "Lisätiedot"-sarakkeen indeksi
 
             table.columns().every(function (colIdx) {
                 let column = this;
@@ -872,15 +882,10 @@
                     let select = $('<select><option value="">Kaikki</option></select>')
                         .appendTo(header)
                         .on('click', function (e) { e.stopPropagation(); }) // Prevent sorting on select click
-                        // For date filter
                         .on('change', function () {
-                            // Remove previous date filter for this table/column
                             $.fn.dataTable.ext.search = $.fn.dataTable.ext.search.filter(fn => !fn._isDateRangeFilter || fn._colIdx !== colIdx);
-
                             let val = $(this).val();
-                            if (!val) {
-                                table.draw();
-                            } else {
+                            if (val) {
                                 let [min, max] = val.split('|');
                                 let filterFn = function (settings, data, dataIndex) {
                                     let cellValue = data[colIdx];
@@ -889,12 +894,11 @@
                                 filterFn._isDateRangeFilter = true;
                                 filterFn._colIdx = colIdx;
                                 $.fn.dataTable.ext.search.push(filterFn);
-                                table.draw();
                             }
+                            table.draw();
                         });
-                    ranges.forEach(r => {
-                        select.append(`<option value="${r.min}|${r.max}">${r.label}</option>`);
-                    });
+                    ranges.forEach(r => select.append(`<option value="${r.min}|${r.max}">${r.label}</option>`));
+
                 } else if (Object.values(rangeCols).includes(colIdx)) {
                     // Numeric range filter
                     let values = column.data().toArray().map(v => parseFloat(v)).filter(v => !isNaN(v));
@@ -902,32 +906,51 @@
                     let select = $('<select><option value="">Kaikki</option></select>')
                         .appendTo(header)
                         .on('click', function (e) { e.stopPropagation(); }) // Prevent sorting on select click
-                        // For numeric filter
                         .on('change', function () {
-                            // Remove previous numeric filter for this table/column
                             $.fn.dataTable.ext.search = $.fn.dataTable.ext.search.filter(fn => !fn._isNumericRangeFilter || fn._colIdx !== colIdx);
-
                             let val = $(this).val();
-                            if (!val) {
-                                column.search('', true, false).draw();
-                            } else {
+                            if (val) {
                                 let [min, max] = val.split('-').map(Number);
                                 let filterFn = function (settings, data, dataIndex) {
                                     let cellValue = parseFloat(data[colIdx]);
-                                    if (isNaN(cellValue)) return false;
-                                    return cellValue >= min && cellValue <= max;
+                                    return !isNaN(cellValue) && cellValue >= min && cellValue <= max;
                                 };
                                 filterFn._isNumericRangeFilter = true;
                                 filterFn._colIdx = colIdx;
                                 $.fn.dataTable.ext.search.push(filterFn);
-                                table.draw();
                             }
+                            table.draw();
                         });
-                    ranges.forEach(r => {
-                        select.append(`<option value="${r.min}-${r.max}">${r.label}</option>`);
+                    ranges.forEach(r => select.append(`<option value="${r.min}-${r.max}">${r.label}</option>`));
+
+                } else if (colIdx === reasonsColIdx) {
+                    // *** UUSI LOGIIKKA "LISÄTIEDOT"-SARAKKEELLE ***
+                    let select = $('<select><option value="">Kaikki</option></select>')
+                        .appendTo(header)
+                        .on('click', function (e) { e.stopPropagation(); })
+                        .on('change', function () {
+                            // Hae valittu arvo ja tee haku, joka etsii osajonoa (ei tarkkaa osumaa)
+                            let val = $(this).val();
+                            column.search(val, false, false).draw();
+                        });
+
+                    // Kerää kaikki yksittäiset syyt sarakkeen soluista
+                    let reasons = new Set();
+                    column.data().each(function (cellData) {
+                        if (cellData) {
+                            cellData.split(/,\s*/).forEach(reason => {
+                                if (reason) reasons.add(reason);
+                            });
+                        }
                     });
+
+                    // Järjestä syyt aakkosjärjestykseen ja lisää ne pudotusvalikkoon
+                    Array.from(reasons).sort().forEach(function (d) {
+                        select.append('<option value="' + d + '">' + d + '</option>');
+                    });
+
                 } else {
-                    // Default value-based filter
+                    // Default value-based filter for other columns
                     let select = $('<select><option value="">Kaikki</option></select>')
                         .appendTo(header)
                         .on('click', function (e) { e.stopPropagation(); }) // Prevent sorting on select click
@@ -936,7 +959,7 @@
                             column.search(val ? '^' + val + '$' : '', true, false).draw();
                         });
                     column.data().unique().sort().each(function (d) {
-                        select.append('<option value="' + d + '">' + d + '</option>');
+                        if (d) select.append('<option value="' + d + '">' + d + '</option>');
                     });
                 }
             });
@@ -951,12 +974,13 @@
         // county, hidden date, finds, favorite points, elevation, and additional reasons
         function displayFullTable(data, selecteddata, onlySelected = false) {
             let html = onlySelected?  "<h2>Valitut kätköt</h2>" : "<h2>Kaikki kätköt</h2>";
-            html += "<table id='allCaches' class='display'><thead><tr><th>ID</th><th>Nimi</th><th>Tyyppi</th><th>Koko</th><th>Vaikeus</th><th>Maasto</th><th>Alue</th><th>Piirikunta</th><th>Piilotettu</th><th>Löydöt</th><th>FP</th><th>Korkeus</th><th>Lisätiedot</th></tr></thead><tbody>";
+            html += "<table id='allCaches' class='display'><thead><tr><th>ID</th><th>Nimi</th><th>Tyyppi</th><th>Koko</th><th>Vaikeus</th><th>Maasto</th><th>Alue</th><th>Kunta</th><th>Piilotettu</th><th>Löydöt</th><th>FP</th><th>Korkeus</th><th>Lisätiedot</th></tr></thead><tbody>";
             const tableData = onlySelected ? selecteddata : data;
 
             tableData.forEach(r => {
-                const extra = r.Reasons.length > 0 ? r.Reasons.join(", ") : "";
-                html += `<tr><td>${r.ID}</td><td>${r["Cache name"]}</td><td>${r.Type}</td><td>${r.Size}</td><td>${r.Difficulty}</td><td>${r.Terrain}</td><td>${r.Region}</td><td>${r.County}</td><td>${r.Hidden.toISOString().split("T")[0]}</td><td>${r.Finds}</td><td>${r.FP}</td><td>${r["Elevation (m)"]}</td><td>${extra}</td></tr>`;
+                const extra = r.Reasons.join(", ");
+                const hiddenDate = r.Hidden instanceof Date && !isNaN(r.Hidden) ? r.Hidden.toISOString().split("T")[0] : "";
+                html += `<tr><td>${r.ID}</td><td>${r["Cache name"]}</td><td>${r.Type}</td><td>${r.Size}</td><td>${r.Difficulty}</td><td>${r.Terrain}</td><td>${r.Region || ''}</td><td>${r.County || ''}</td><td>${hiddenDate}</td><td>${r.Finds}</td><td>${r.FP}</td><td>${r["Elevation (m)"]}</td><td>${extra}</td></tr>`;
             });
             html += "</tbody></table>";
             document.getElementById("results").innerHTML = html;
@@ -974,8 +998,8 @@
                 // Päivitä kartta aina kun taulukkoa filtteröidään
                 table.on('draw', function () {
                     const filteredData = table.rows({ search: 'applied' }).data().toArray();
-                    const ids = filteredData.map(row => row[0]); // Oletus: ID on sarake 0
-                    const matchingRows = allData.filter(row => ids.includes(row.ID));
+                    const ids = new Set(filteredData.map(row => row[0])); // Oletus: ID on sarake 0
+                    const matchingRows = allData.filter(row => ids.has(row.ID));
                     visualizeMap(allData, matchingRows); // näytetään vain filtteröidyt
                 });
 
@@ -1013,7 +1037,7 @@
                 const [
                     id, name, type, size, difficulty, terrain,
                     region, county, hiddenStr, finds, fp, elev, reasonsText
-                ] = cells.map(text => text.trim());
+                ] = cells.map(text => text ? text.trim() : '');
 
                 const match = allData.find(r => r.ID === id);
                 if (!match) return;
@@ -1098,7 +1122,7 @@
             });
 
             const serializer = new XMLSerializer();
-            const gpxString = serializer.serializeToString(doc);
+            const gpxString = '<?xml version="1.0" encoding="UTF-8"?>' + serializer.serializeToString(doc);
 
             const blob = new Blob([gpxString], { type: "application/gpx+xml" });
             const url = URL.createObjectURL(blob);
@@ -1125,9 +1149,10 @@
             table.destroy();
         }
         const tableEl = document.getElementById("allCaches");
-        if (tableEl) tableEl.remove();
+        if (tableEl) tableEl.parentElement.removeChild(tableEl);
+        
         collectSelections(allData); // lisää Reasons vain datalle
-        const dataToDisplay = onlySelected ? allData.filter(r => r.Reasons?.length) : allData;
+        const dataToDisplay = onlySelected ? allData.filter(r => r.Reasons?.length > 0) : allData;
         displayFullTable(allData, dataToDisplay, onlySelected);
         visualizeMap(allData, dataToDisplay);           // Päivitä kartta
     });
