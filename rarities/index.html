@@ -3,6 +3,7 @@
 
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Geokätköanalyysi</title>
     <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -10,13 +11,15 @@
     <link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/jquery.dataTables.min.css" />
     <style>
         #map {
-            height: 500px;
+            height: 50vh;
             min-height: 300px;
-            min-width: 300px;
-            resize: vertical;
-            overflow: auto;
+            width: 100%;
             margin-top: 20px;
         }
+<!--  min-width: 300px; -->           
+<!-- resize: vertical; -->            
+<!-- overflow: auto; -->
+        
 
         body {
             font-family: sans-serif;
@@ -51,24 +54,65 @@
             margin-top: 4px;
             width: 100%;
         }
+
+        button, select, input[type="file"] {
+            font-size: 1rem;
+            <!-- padding: 0.5em 1em; -->
+            margin: 5px 0;
+            max-width: 100%;
+        }
+
+
+        @media (max-width: 768px) {
+            table, thead, tbody, th, td, tr {
+                display: block;
+            }
+
+            thead tr {
+                display: none;
+            }
+
+            td {
+                position: relative;
+                padding-left: 50%;
+                border: 1px solid #ccc;
+            }
+
+            td::before {
+                content: attr(data-label);
+                position: absolute;
+                left: 5px;
+                top: 5px;
+                white-space: nowrap;
+                font-weight: bold;
+                color: #444;
+            }
+
+            table.display {
+                font-size: 14px;
+            }
+        }
+
     </style>
 </head>
 
 <body>
-    <h1>Geokätköjen analyysi</h1>
+    <h1>Etsi harvinaiset kätköt</h1>
     <label for="fileType">Tiedostotyyppi:</label>
     <select id="fileType">
         <option value="csv">CSV</option>
         <option value="gpx">GPX</option>
     </select>
     <input type="file" id="inputFile" accept=".csv,.gpx">
-    <button onclick="processFile()">Analysoi</button>
-    <label><input type="checkbox" id="showAll"> Näytä kaikki kätköt kartalla</label>
-    <label><input type="checkbox" id="showHeatmap"> Näytä lämpökartta</label>
     <br>
+    <br>
+    <button onclick="processFile()">Analysoi</button>
     <label><input type="checkbox" id="showCountry" checked> Maa</label>
     <label><input type="checkbox" id="showRegion" checked> Alue</label>
     <label><input type="checkbox" id="showCounty" checked> Kunta</label>
+    <br>
+    <label><input type="checkbox" id="showAll"> Näytä kaikki kätköt</label>
+    <label><input type="checkbox" id="showHeatmap"> Näytä lämpökartta</label>
     <div id="map"></div>
     <button onclick="exportSelectedToGPX()">Lataa GPX-valitut</button>
     <div id="results"></div>
@@ -198,9 +242,6 @@
         const ATTRIBUTE_URL = "https://github.com/cgeo/cgeo/tree/master/main/project/attributes/svgs/";
         let dtTypeFilter = null; // null means no filter
         let dtSizeFilter = null;
-
-
-
         let allData = [], selectedIDs = new Set(), map;
 
         // Convert coordinate string to decimal format
@@ -339,7 +380,6 @@
                     // Name
                     const name = cache.getElementsByTagNameNS(ns.groundspeak, "name")[0]?.textContent || "";
 
-
                     // Size/Container
                     const container = cache.getElementsByTagNameNS(ns.groundspeak, "container")[0]?.textContent || "?";
                     sizes[container] = (sizes[container] || 0) + 1;
@@ -475,10 +515,11 @@
                  }));
 
                 selectedIDs = new Set();
-                const selected = collectSelections(allData);
-                visualizeMap(allData, selected);
-                displayAnalysis(selected);
-                displayFullTable(allData);
+                collectSelections(allData); // lisää Reasons vain datalle
+                const onlySelected = !document.getElementById("showAll").checked;
+                const dataToDisplay = onlySelected ? allData.filter(r => r.Reasons?.length) : allData;
+                displayFullTable(allData, dataToDisplay, onlySelected);
+                visualizeMap(allData, dataToDisplay);
             };
 
             reader.readAsText(file);
@@ -521,10 +562,11 @@
                         });
 
                         selectedIDs = new Set();
-                        const selected = collectSelections(allData);
-                        visualizeMap(allData, selected);
-                        displayAnalysis(selected);
-                        displayFullTable(allData);
+                        collectSelections(allData); // lisää Reasons vain datalle
+                        const onlySelected = !document.getElementById("showAll").checked;
+                        const dataToDisplay = onlySelected ? allData.filter(r => r.Reasons?.length) : allData;
+                        displayFullTable(allData, dataToDisplay, onlySelected);
+                        visualizeMap(allData, dataToDisplay);
                     }
                 });
             };
@@ -567,6 +609,8 @@
         }
 
         function addReason(row, reason) {
+            if (!row) return;
+            row.Reasons ??= [];
             if (!row.Reasons.includes(reason)) row.Reasons.push(reason);
         }
 
@@ -898,82 +942,6 @@
             });
         }
 
-        // Display analysis results in a table format
-        // selected: array of selected cache objects with reasons for selection
-        // Each object will have a 'Reasons' array explaining why it was selected
-        // Displays a summary table with cache details and reasons for selection
-        function displayAnalysis(selected) {
-            let html = "<h2>Ehdotus valituista kätköistä</h2>";
-            html += `<table id="analysisTable" class="display"><thead><tr>
-                <th>ID</th><th>Nimi</th><th>Tyyppi</th><th>Koko</th><th>Vaikeus</th><th>Maasto</th>
-                <th>Alue</th><th>Piirikunta</th><th>Piilotettu</th><th>Löydöt</th><th>FP</th>
-                <th>Korkeus</th><th>Täyttää ehdot</th><th>Vaihtoehtojen määrä</th>
-            </tr></thead><tbody>`;
-            selected.forEach(r => {
-                // Start with caches that match all non-D/T/Type/Size reasons
-                const baseReasons = r.Reasons.filter(reason =>
-                    !/^D\d/.test(reason) &&
-                    !/^T\d/.test(reason) &&
-                    !/^Type:/.test(reason) &&
-                    !/^Size:/.test(reason)
-                );
-
-                let alternatives = allData.filter(o => {
-                    // Must not be the same cache
-                    if (o.ID === r.ID) return false;
-
-                    // Must match all base reasons
-                    if (!baseReasons.every(reason => o.Reasons.includes(reason))) return false;
-
-                    // For D, T, Type, Size reasons, match by column value
-                    let match = true;
-                    r.Reasons.forEach(reason => {
-                        if (/^D(\d+(\.\d+)?)$/.test(reason)) {
-                            // Difficulty match
-                            const val = parseFloat(reason.slice(1));
-                            if (o.Difficulty !== val) match = false;
-                        }
-                        if (/^T(\d+(\.\d+)?)$/.test(reason)) {
-                            // Terrain match
-                            const val = parseFloat(reason.slice(1));
-                            if (o.Terrain !== val) match = false;
-                        }
-                        if (/^Type:(.+)$/.test(reason)) {
-                            // Type match
-                            const val = reason.slice(5);
-                            if (o.Type !== val) match = false;
-                        }
-                        if (/^Size:(.+)$/.test(reason)) {
-                            // Size match
-                            const val = reason.slice(5);
-                            if (o.Size !== val) match = false;
-                        }
-                    });
-                    return match;
-                });
-
-                const altCount = alternatives.length;
-                html += `<tr>
-                    <td>${r.ID}</td><td>${r["Cache name"]}</td><td>${r.Type}</td><td>${r.Size}</td>
-                    <td>${r.Difficulty}</td><td>${r.Terrain}</td><td>${r.Region}</td><td>${r.County}</td>
-                    <td>${r.Hidden.toISOString().split("T")[0]}</td><td>${r.Finds}</td><td>${r.FP}</td>
-                    <td>${r["Elevation (m)"]}</td><td>${r.Reasons.join(", ")}</td><td>${altCount}</td>
-                </tr>`;
-            });
-            html += "</tbody></table>";
-            document.getElementById("results").innerHTML = html;
-
-            $(document).ready(function () {
-                $('#analysisTable').DataTable({
-                    language: {
-                        url: "https://cdn.datatables.net/plug-ins/1.13.6/i18n/Finnish.json"
-                    },
-                    initComplete: function () {
-                        initDataTableFilters('#analysisTable');
-                    }
-                });
-            });
-        }
 
         // Display full table with all caches
         // data: array of all cache objects
@@ -981,18 +949,20 @@
         // Displays a comprehensive table with all cache details
         // Includes columns for ID, name, type, size, difficulty, terrain, region,
         // county, hidden date, finds, favorite points, elevation, and additional reasons
-        function displayFullTable(data) {
-            let html = "<h2>Kaikki kätköt</h2>";
+        function displayFullTable(data, selecteddata, onlySelected = false) {
+            let html = onlySelected?  "<h2>Valitut kätköt</h2>" : "<h2>Kaikki kätköt</h2>";
             html += "<table id='allCaches' class='display'><thead><tr><th>ID</th><th>Nimi</th><th>Tyyppi</th><th>Koko</th><th>Vaikeus</th><th>Maasto</th><th>Alue</th><th>Piirikunta</th><th>Piilotettu</th><th>Löydöt</th><th>FP</th><th>Korkeus</th><th>Lisätiedot</th></tr></thead><tbody>";
-            data.forEach(r => {
+            const tableData = onlySelected ? selecteddata : data;
+
+            tableData.forEach(r => {
                 const extra = r.Reasons.length > 0 ? r.Reasons.join(", ") : "";
                 html += `<tr><td>${r.ID}</td><td>${r["Cache name"]}</td><td>${r.Type}</td><td>${r.Size}</td><td>${r.Difficulty}</td><td>${r.Terrain}</td><td>${r.Region}</td><td>${r.County}</td><td>${r.Hidden.toISOString().split("T")[0]}</td><td>${r.Finds}</td><td>${r.FP}</td><td>${r["Elevation (m)"]}</td><td>${extra}</td></tr>`;
             });
             html += "</tbody></table>";
-            document.getElementById("results").innerHTML += html;
+            document.getElementById("results").innerHTML = html;
 
             $(document).ready(function () {
-                $('#allCaches').DataTable({
+                const table = $('#allCaches').DataTable({
                     language: {
                         url: "https://cdn.datatables.net/plug-ins/1.13.6/i18n/Finnish.json"
                     },
@@ -1000,6 +970,15 @@
                         initDataTableFilters('#allCaches');
                     }
                 });
+
+                // Päivitä kartta aina kun taulukkoa filtteröidään
+                table.on('draw', function () {
+                    const filteredData = table.rows({ search: 'applied' }).data().toArray();
+                    const ids = filteredData.map(row => row[0]); // Oletus: ID on sarake 0
+                    const matchingRows = allData.filter(row => ids.includes(row.ID));
+                    visualizeMap(allData, matchingRows); // näytetään vain filtteröidyt
+                });
+
             });
         }
 
@@ -1008,7 +987,7 @@
             const nsGroundspeak = "http://www.groundspeak.com/cache/1/0/1";
             const nsGSAK = "http://www.gsak.net/xmlv1/6";
 
-            const table = $('#analysisTable').DataTable();
+            const table = $('#allCaches').DataTable();
             if (!table) {
                 alert("Ehdotuslistaa ei ole vielä luotu.");
                 return;
@@ -1129,6 +1108,29 @@
             a.click();
             URL.revokeObjectURL(url);
         }
+        function getCurrentSelection() {
+            const showAll = document.getElementById("showAll").checked;
+            if (showAll) {
+                return allData;
+            } else {
+                return collectSelections(allData);
+            }
+        }
+
+
+    document.getElementById("showAll").addEventListener("change", () => {
+        const onlySelected = !document.getElementById("showAll").checked;
+        const table = $('#allCaches').DataTable();
+        if (table) {
+            table.destroy();
+        }
+        const tableEl = document.getElementById("allCaches");
+        if (tableEl) tableEl.remove();
+        collectSelections(allData); // lisää Reasons vain datalle
+        const dataToDisplay = onlySelected ? allData.filter(r => r.Reasons?.length) : allData;
+        displayFullTable(allData, dataToDisplay, onlySelected);
+        visualizeMap(allData, dataToDisplay);           // Päivitä kartta
+    });
 
 
     </script>
