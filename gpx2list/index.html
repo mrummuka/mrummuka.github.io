@@ -3,10 +3,22 @@
 <head>
   <meta charset="UTF-8">
   <title>GPX-kätkötaulukko</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <style>
+    body { font-family: sans-serif; }
     table, th, td { border: 1px solid black; border-collapse: collapse; padding: 4px; }
-    th { background-color: #f2f2f2; }
+    th { background-color: #f2f2f2; cursor: pointer; }
     input.filter { width: 100%; box-sizing: border-box; }
+    button.download { padding: 2px 6px; }
+    .modal {
+      position: fixed; top: 10%; left: 50%; transform: translateX(-50%);
+      background: white; border: 1px solid #333; padding: 10px; z-index: 1000;
+      max-height: 80vh; overflow-y: auto;
+    }
+    .overlay {
+      position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+      background: rgba(0,0,0,0.4); z-index: 999;
+    }
   </style>
 </head>
 <body>
@@ -16,6 +28,7 @@
   <table id="cacheTable">
     <thead>
       <tr>
+        <!-- Suodatusrivit -->
         <th><input class="filter" data-index="0" placeholder="GC-koodi"></th>
         <th><input class="filter" data-index="1" placeholder="Nimi"></th>
         <th><input class="filter" data-index="2" placeholder="Koordinaatit"></th>
@@ -30,9 +43,11 @@
         <th><input class="filter" data-index="11" placeholder="Maakunta"></th>
         <th><input class="filter" data-index="12" placeholder="Päivämäärä"></th>
         <th><input class="filter" data-index="13" placeholder="URL"></th>
+        <th><input class="filter" data-index="14" placeholder="Ympyrä"></th>
       </tr>
       <tr>
-        <th>GC-koodi</th>
+        <!-- Otsikkorivi -->
+        <th id="gcHeader">GC-koodi (klikkaa)</th>
         <th>Nimi</th>
         <th>Koordinaatit</th>
         <th>Koordinaatit2</th>
@@ -46,12 +61,28 @@
         <th>Maakunta</th>
         <th>Päivämäärä</th>
         <th>URL</th>
+        <th>3.2km ympyrä</th>
       </tr>
     </thead>
     <tbody></tbody>
   </table>
 
+  <div id="gcModal" style="display:none;">
+    <div class="overlay" onclick="closeModal()"></div>
+    <div class="modal">
+      <h3>Valitse GC-koodit</h3>
+      <div id="gcOptions"></div>
+      <button onclick="selectAllGC()">Valitse kaikki</button>
+      <button onclick="clearAllGC()">Poista kaikki</button>
+      <button onclick="applyGCFilter()">Käytä</button>
+      <button onclick="closeModal()">Sulje</button>
+    </div>
+  </div>
+
   <script>
+    let gcCodeVisible = new Set();
+    let allGCcodes = [];
+
     function toDM(coord, isLat) {
       const dir = isLat ? (coord >= 0 ? "N" : "S") : (coord >= 0 ? "E" : "W");
       const abs = Math.abs(coord);
@@ -60,7 +91,47 @@
       return `${dir} ${deg} ${min}`;
     }
 
-    document.getElementById('gpxFile').addEventListener('change', function (event) {
+    function createCirclePoints(centerLat, centerLon, radiusMeters, numPoints = 64) {
+      const coords = [];
+      const R = 6371000;
+      for (let i = 0; i <= numPoints; i++) {
+        const angle = (2 * Math.PI / numPoints) * i;
+        const dx = radiusMeters * Math.cos(angle);
+        const dy = radiusMeters * Math.sin(angle);
+        const newLat = centerLat + (dy / R) * (180 / Math.PI);
+        const newLon = centerLon + (dx / (R * Math.cos(centerLat * Math.PI / 180))) * (180 / Math.PI);
+        coords.push({ lat: newLat, lon: newLon });
+      }
+      return coords;
+    }
+
+    function generateKML(circlePoints) {
+      const coordStr = circlePoints.map(p => `${p.lon},${p.lat},0`).join("\n              ");
+      return `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>2 mailin ympyrä</name>
+    <Placemark>
+      <name>2 mailin ympyrä</name>
+      <Style>
+        <LineStyle><color>ff0000ff</color><width>2</width></LineStyle>
+        <PolyStyle><color>3d0000ff</color></PolyStyle>
+      </Style>
+      <Polygon>
+        <outerBoundaryIs>
+          <LinearRing>
+            <coordinates>
+              ${coordStr}
+            </coordinates>
+          </LinearRing>
+        </outerBoundaryIs>
+      </Polygon>
+    </Placemark>
+  </Document>
+</kml>`;
+    }
+
+    document.getElementById("gpxFile").addEventListener("change", function (event) {
       const reader = new FileReader();
       reader.onload = function () {
         const parser = new DOMParser();
@@ -68,11 +139,16 @@
         const wpts = xmlDoc.getElementsByTagName("wpt");
         const tbody = document.querySelector("#cacheTable tbody");
         tbody.innerHTML = "";
+        allGCcodes = [];
+        gcCodeVisible = new Set();
 
         for (let wpt of wpts) {
           const lat = parseFloat(wpt.getAttribute("lat"));
           const lon = parseFloat(wpt.getAttribute("lon"));
           const gcCode = wpt.getElementsByTagName("name")[0]?.textContent ?? "";
+          allGCcodes.push(gcCode);
+          gcCodeVisible.add(gcCode);
+
           const gs = wpt.getElementsByTagNameNS("*", "desc")[0]?.textContent ?? "";
           const placedBy = wpt.getElementsByTagNameNS("*", "placed_by")[0]?.textContent ?? "";
           const type = wpt.getElementsByTagNameNS("*", "type")[0]?.textContent ?? "";
@@ -81,13 +157,10 @@
           const terrain = wpt.getElementsByTagNameNS("*", "terrain")[0]?.textContent ?? "";
           const country = wpt.getElementsByTagNameNS("*", "country")[0]?.textContent ?? "";
           const state = wpt.getElementsByTagNameNS("*", "state")[0]?.textContent ?? "";
-          const date = wpt.getElementsByTagNameNS("*", "date")[0]?.textContent ?? "";
+                    const date = wpt.getElementsByTagNameNS("*", "date")[0]?.textContent ?? "";
           const url = wpt.getElementsByTagName("url")[0]?.textContent ?? "";
-
           const attributes = Array.from(wpt.getElementsByTagNameNS("*", "attribute"))
-            .map(attr => attr.textContent)
-            .join(", ");
-
+            .map(attr => attr.textContent).join(", ");
           const coord1 = `${lat.toFixed(6)}, ${lon.toFixed(6)}`;
           const coord2 = `${toDM(lat, true)} ${toDM(lon, false)}`;
 
@@ -108,24 +181,56 @@
             <td>${date}</td>
             <td><a href="${url}" target="_blank">${url}</a></td>
           `;
+          const downloadButton = document.createElement("button");
+          downloadButton.textContent = "⭳";
+          downloadButton.className = "download";
+          downloadButton.addEventListener("click", async () => {
+            const circlePoints = createCirclePoints(lat, lon, 1609.344 * 2);
+            const zip = new JSZip();
+            zip.file("ympyra.kml", generateKML(circlePoints));
+            const blob = await zip.generateAsync({ type: "blob" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `ympyra_${gcCode || "katko"}.zip`;
+            a.click();
+          });
+          const circleCell = document.createElement("td");
+          circleCell.appendChild(downloadButton);
+          row.appendChild(circleCell);
           tbody.appendChild(row);
         }
+
+        updateGCModal();
       };
       reader.readAsText(event.target.files[0]);
     });
 
+    function matchesTextFilters(row) {
+      const filters = document.querySelectorAll("input.filter");
+      return Array.from(filters).every((input, i) => {
+        const value = input.value.toLowerCase();
+        const cell = row.cells[i]?.textContent.toLowerCase() ?? "";
+        return cell.includes(value);
+      });
+    }
+
+    document.querySelectorAll("input.filter").forEach(input => {
+      input.addEventListener("input", () => applyGCFilter());
+    });
+
     document.getElementById("exportBtn").addEventListener("click", () => {
       const rows = document.querySelectorAll("#cacheTable tbody tr");
-      const headers = Array.from(document.querySelectorAll("#cacheTable thead tr")[1].children).map(th => th.textContent.trim());
+      const headers = Array.from(document.querySelectorAll("#cacheTable thead tr")[1].children)
+        .map(th => th.textContent.trim());
       let csv = headers.join(",") + "\n";
-
       rows.forEach(row => {
         if (row.style.display !== "none") {
-          const values = Array.from(row.children).map(td => `"${td.textContent.trim().replace(/"/g, '""')}"`);
+          const values = Array.from(row.children).map(td =>
+            `"${td.textContent.trim().replace(/"/g, '""')}"`);
           csv += values.join(",") + "\n";
         }
       });
-
       const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
       const link = document.createElement("a");
       link.href = URL.createObjectURL(blob);
@@ -133,19 +238,42 @@
       link.click();
     });
 
-    document.querySelectorAll("input.filter").forEach(input => {
-      input.addEventListener("input", function () {
-        const index = parseInt(this.dataset.index);
-        const filter = this.value.toLowerCase();
-        const rows = document.querySelectorAll("#cacheTable tbody tr");
-
-        rows.forEach(row => {
-          const text = row.cells[index].textContent.toLowerCase();
-          row.style.display = text.includes(filter) ? "" : "none";
-        });
-      });
+    document.getElementById("gcHeader").addEventListener("click", () => {
+      document.getElementById("gcModal").style.display = "block";
     });
+
+    function closeModal() {
+      document.getElementById("gcModal").style.display = "none";
+    }
+
+    function updateGCModal() {
+      const container = document.getElementById("gcOptions");
+      container.innerHTML = "";
+      [...new Set(allGCcodes)].sort().forEach(code => {
+        const label = document.createElement("label");
+        label.innerHTML = `<input type="checkbox" value="${code}" checked> ${code}<br>`;
+        container.appendChild(label);
+      });
+    }
+
+    function selectAllGC() {
+      document.querySelectorAll("#gcOptions input").forEach(i => i.checked = true);
+    }
+
+    function clearAllGC() {
+      document.querySelectorAll("#gcOptions input").forEach(i => i.checked = false);
+    }
+
+    function applyGCFilter() {
+      gcCodeVisible = new Set(
+        Array.from(document.querySelectorAll("#gcOptions input:checked")).map(i => i.value)
+      );
+      document.querySelectorAll("#cacheTable tbody tr").forEach(row => {
+        const gc = row.cells[0]?.textContent ?? "";
+        row.style.display =
+          gcCodeVisible.has(gc) && matchesTextFilters(row) ? "" : "none";
+      });
+    }
   </script>
 </body>
 </html>
-<!DOCTYPE html>
