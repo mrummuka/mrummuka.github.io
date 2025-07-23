@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="fi">
+<head>
+  <meta charset="UTF-8">
+  <title>Koordinaattityökalu</title>
+  <script src="https://unpkg.com/jszip@3.1.5/dist/jszip.min.js"></script>
+
+</head>
+<body>
+  <h2>Syötä koordinaatit muodossa: N 60 11.234 E 024 55.342</h2>
+  <input type="text" id="coordsInput" placeholder="N 60 11.234 E 024 55.342" size="40">
+  <button onclick="processCoordinates()">Luo tiedosto</button>
+
+  <div id="downloads" style="margin-top: 20px;"></div>
+
+  <script>
+    function dmsToDecimal(degrees, minutes, direction) {
+      let decimal = parseFloat(degrees) + parseFloat(minutes) / 60;
+      if (direction === 'S' || direction === 'W') decimal *= -1;
+      return decimal;
+    }
+
+    function parseInput(input) {
+      const regex = /([NS])\s+(\d+)\s+([\d.]+)\s+([EW])\s+(\d+)\s+([\d.]+)/i;
+      const match = input.match(regex);
+      if (!match) {
+        alert("Syötevirhe! Tarkista koordinaattien muoto.");
+        return null;
+      }
+      const lat = dmsToDecimal(match[2], match[3], match[1].toUpperCase());
+      const lon = dmsToDecimal(match[5], match[6], match[4].toUpperCase());
+      return { lat, lon };
+    }
+
+    function createCirclePoints(centerLat, centerLon, radiusMeters, numPoints = 64) {
+      const coords = [];
+      const R = 6371000;
+      for (let i = 0; i <= numPoints; i++) {
+        const angle = (2 * Math.PI / numPoints) * i;
+        const dx = radiusMeters * Math.cos(angle);
+        const dy = radiusMeters * Math.sin(angle);
+
+        const newLat = centerLat + (dy / R) * (180 / Math.PI);
+        const newLon = centerLon + (dx / (R * Math.cos(centerLat * Math.PI / 180))) * (180 / Math.PI);
+
+        coords.push({ lat: newLat, lon: newLon });
+      }
+      return coords;
+    }
+
+    function generateKML(circlePoints) {
+      const coordStr = circlePoints.map(p => `${p.lon},${p.lat},0`).join('\n              ');
+      return `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>2 mailin ympyrä</name>
+    <Placemark>
+      <name>2 mailin ympyrä</name>
+      <Style>
+        <LineStyle><color>ff0000ff</color><width>2</width></LineStyle>
+        <PolyStyle><color>3d0000ff</color></PolyStyle>
+      </Style>
+      <Polygon>
+        <outerBoundaryIs>
+          <LinearRing>
+            <coordinates>
+              ${coordStr}
+            </coordinates>
+          </LinearRing>
+        </outerBoundaryIs>
+      </Polygon>
+    </Placemark>
+  </Document>
+</kml>`;
+    }
+
+    function generateGPX(circlePoints) {
+      const pointsStr = circlePoints.map(p => `<trkpt lat="${p.lat.toFixed(6)}" lon="${p.lon.toFixed(6)}"></trkpt>`).join('\n      ');
+      return `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="Koordinaattityökalu" xmlns="http://www.topografix.com/GPX/1/1">
+  <trk>
+    <name>2 mailin ympyrä</name>
+    <trkseg>
+      ${pointsStr}
+    </trkseg>
+  </trk>
+</gpx>`;
+    }
+
+    async function processCoordinates() {
+      const input = document.getElementById("coordsInput").value;
+      const coords = parseInput(input);
+      if (!coords) return;
+
+      const RADIUS = 1609.344 * 2;
+      const circlePoints = createCirclePoints(coords.lat, coords.lon, RADIUS);
+
+      const downloads = document.getElementById("downloads");
+      downloads.innerHTML = "<strong>Ladattavat tiedostot:</strong><br>";
+
+      // KML
+      const kmlZip = new JSZip();
+      kmlZip.file("ympyra.kml", generateKML(circlePoints));
+      const kmlBlob = await kmlZip.generateAsync({ type: "blob" });
+      addDownloadLink(kmlBlob, "ympyra_kml.zip", downloads);
+
+      // GPX
+      const gpxZip = new JSZip();
+      gpxZip.file("ympyra.gpx", generateGPX(circlePoints));
+      const gpxBlob = await gpxZip.generateAsync({ type: "blob" });
+      addDownloadLink(gpxBlob, "ympyra_gpx.zip", downloads);
+
+      
+
+    }
+
+    function addDownloadLink(blob, filename, container) {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.textContent = `Lataa ${filename}`;
+      a.style.display = "block";
+      container.appendChild(a);
+    }
+  </script>
+</body>
+</html>
