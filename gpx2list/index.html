@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="fi">
+<head>
+  <meta charset="UTF-8">
+  <title>GPX-kätkötaulukko</title>
+  <style>
+    table, th, td { border: 1px solid black; border-collapse: collapse; padding: 4px; }
+    th { background-color: #f2f2f2; }
+    input.filter { width: 100%; box-sizing: border-box; }
+  </style>
+</head>
+<body>
+  <h1>GPX-kätköt</h1>
+  <input type="file" id="gpxFile" accept=".gpx">
+  <button id="exportBtn">Vie CSV</button>
+  <table id="cacheTable">
+    <thead>
+      <tr>
+        <th><input class="filter" data-index="0" placeholder="GC-koodi"></th>
+        <th><input class="filter" data-index="1" placeholder="Nimi"></th>
+        <th><input class="filter" data-index="2" placeholder="Koordinaatit"></th>
+        <th><input class="filter" data-index="3" placeholder="Koordinaatit2"></th>
+        <th><input class="filter" data-index="4" placeholder="Placed by"></th>
+        <th><input class="filter" data-index="5" placeholder="Tyyppi"></th>
+        <th><input class="filter" data-index="6" placeholder="Kokoluokka"></th>
+        <th><input class="filter" data-index="7" placeholder="Attribuutit"></th>
+        <th><input class="filter" data-index="8" placeholder="Vaikeus"></th>
+        <th><input class="filter" data-index="9" placeholder="Maasto"></th>
+        <th><input class="filter" data-index="10" placeholder="Maa"></th>
+        <th><input class="filter" data-index="11" placeholder="Maakunta"></th>
+        <th><input class="filter" data-index="12" placeholder="Päivämäärä"></th>
+        <th><input class="filter" data-index="13" placeholder="URL"></th>
+      </tr>
+      <tr>
+        <th>GC-koodi</th>
+        <th>Nimi</th>
+        <th>Koordinaatit</th>
+        <th>Koordinaatit2</th>
+        <th>Placed by</th>
+        <th>Tyyppi</th>
+        <th>Kokoluokka</th>
+        <th>Attribuutit</th>
+        <th>Vaikeus</th>
+        <th>Maasto</th>
+        <th>Maa</th>
+        <th>Maakunta</th>
+        <th>Päivämäärä</th>
+        <th>URL</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
+  <script>
+    function toDM(coord, isLat) {
+      const dir = isLat ? (coord >= 0 ? "N" : "S") : (coord >= 0 ? "E" : "W");
+      const abs = Math.abs(coord);
+      const deg = Math.floor(abs);
+      const min = ((abs - deg) * 60).toFixed(3);
+      return `${dir} ${deg} ${min}`;
+    }
+
+    document.getElementById('gpxFile').addEventListener('change', function (event) {
+      const reader = new FileReader();
+      reader.onload = function () {
+        const parser = new DOMParser();
+        const xmlDoc = parser.parseFromString(reader.result, "application/xml");
+        const wpts = xmlDoc.getElementsByTagName("wpt");
+        const tbody = document.querySelector("#cacheTable tbody");
+        tbody.innerHTML = "";
+
+        for (let wpt of wpts) {
+          const lat = parseFloat(wpt.getAttribute("lat"));
+          const lon = parseFloat(wpt.getAttribute("lon"));
+          const gcCode = wpt.getElementsByTagName("name")[0]?.textContent ?? "";
+          const gs = wpt.getElementsByTagNameNS("*", "desc")[0]?.textContent ?? "";
+          const placedBy = wpt.getElementsByTagNameNS("*", "placed_by")[0]?.textContent ?? "";
+          const type = wpt.getElementsByTagNameNS("*", "type")[0]?.textContent ?? "";
+          const container = wpt.getElementsByTagNameNS("*", "container")[0]?.textContent ?? "";
+          const difficulty = wpt.getElementsByTagNameNS("*", "difficulty")[0]?.textContent ?? "";
+          const terrain = wpt.getElementsByTagNameNS("*", "terrain")[0]?.textContent ?? "";
+          const country = wpt.getElementsByTagNameNS("*", "country")[0]?.textContent ?? "";
+          const state = wpt.getElementsByTagNameNS("*", "state")[0]?.textContent ?? "";
+          const date = wpt.getElementsByTagNameNS("*", "date")[0]?.textContent ?? "";
+          const url = wpt.getElementsByTagName("url")[0]?.textContent ?? "";
+
+          const attributes = Array.from(wpt.getElementsByTagNameNS("*", "attribute"))
+            .map(attr => attr.textContent)
+            .join(", ");
+
+          const coord1 = `${lat.toFixed(6)}, ${lon.toFixed(6)}`;
+          const coord2 = `${toDM(lat, true)} ${toDM(lon, false)}`;
+
+          const row = document.createElement("tr");
+          row.innerHTML = `
+            <td>${gcCode}</td>
+            <td>${gs}</td>
+            <td>${coord1}</td>
+            <td>${coord2}</td>
+            <td>${placedBy}</td>
+            <td>${type}</td>
+            <td>${container}</td>
+            <td>${attributes}</td>
+            <td>${difficulty}</td>
+            <td>${terrain}</td>
+            <td>${country}</td>
+            <td>${state}</td>
+            <td>${date}</td>
+            <td><a href="${url}" target="_blank">${url}</a></td>
+          `;
+          tbody.appendChild(row);
+        }
+      };
+      reader.readAsText(event.target.files[0]);
+    });
+
+    document.getElementById("exportBtn").addEventListener("click", () => {
+      const rows = document.querySelectorAll("#cacheTable tbody tr");
+      const headers = Array.from(document.querySelectorAll("#cacheTable thead tr")[1].children).map(th => th.textContent.trim());
+      let csv = headers.join(",") + "\n";
+
+      rows.forEach(row => {
+        if (row.style.display !== "none") {
+          const values = Array.from(row.children).map(td => `"${td.textContent.trim().replace(/"/g, '""')}"`);
+          csv += values.join(",") + "\n";
+        }
+      });
+
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = "gpx_katkot.csv";
+      link.click();
+    });
+
+    document.querySelectorAll("input.filter").forEach(input => {
+      input.addEventListener("input", function () {
+        const index = parseInt(this.dataset.index);
+        const filter = this.value.toLowerCase();
+        const rows = document.querySelectorAll("#cacheTable tbody tr");
+
+        rows.forEach(row => {
+          const text = row.cells[index].textContent.toLowerCase();
+          row.style.display = text.includes(filter) ? "" : "none";
+        });
+      });
+    });
+  </script>
+</body>
+</html>
+<!DOCTYPE html>
