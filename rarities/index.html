@@ -832,9 +832,11 @@
         // tableSelector: CSS selector for the DataTable element
         function initDataTableFilters(tableSelector) {
             const table = $(tableSelector).DataTable();
-            const rangeCols = { "Löydöt": 9, "FP": 10, "Korkeus": 11 };
-            const dateColIdx = 8; // Piilotettu-sarakkeen indeksi
-            const reasonsColIdx = 12; // "Lisätiedot"-sarakkeen indeksi
+            // Updated column indices
+            const rangeCols = { "Löydöt": 10, "FP": 11, "Korkeus": 12 };
+            const dateColIdx = 9; // Piilotettu-sarakkeen indeksi
+            const reasonsColIdx = 13; // "Lisätiedot"-sarakkeen indeksi
+
 
             table.columns().every(function (colIdx) {
                 let column = this;
@@ -941,13 +943,13 @@
         // county, hidden date, finds, favorite points, elevation, and additional reasons
         function displayFullTable(data, selecteddata, onlySelected = false) {
             let html = onlySelected?  "<h2>Valitut kätköt</h2>" : "<h2>Kaikki kätköt</h2>";
-            html += "<table id='allCaches' class='display'><thead><tr><th>ID</th><th>Nimi</th><th>Tyyppi</th><th>Koko</th><th>Vaikeus</th><th>Maasto</th><th>Alue</th><th>Kunta</th><th>Piilotettu</th><th>Löydöt</th><th>FP</th><th>Korkeus</th><th>Lisätiedot</th></tr></thead><tbody>";
+            html += "<table id='allCaches' class='display'><thead><tr><th>ID</th><th>Nimi</th><th>Tyyppi</th><th>Koko</th><th>Vaikeus</th><th>Maasto</th><th>Maa</th><th>Alue</th><th>Kunta</th><th>Piilotettu</th><th>Löydöt</th><th>FP</th><th>Korkeus</th><th>Lisätiedot</th></tr></thead><tbody>";
             const tableData = onlySelected ? selecteddata : data;
 
             tableData.forEach(r => {
                 const extra = r.Reasons.join(", ");
                 const hiddenDate = r.Hidden instanceof Date && !isNaN(r.Hidden) ? r.Hidden.toISOString().split("T")[0] : "";
-                html += `<tr><td>${r.ID}</td><td>${r["Cache name"]}</td><td>${r.Type}</td><td>${r.Size}</td><td>${r.Difficulty}</td><td>${r.Terrain}</td><td>${r.Region || ''}</td><td>${r.County || ''}</td><td>${hiddenDate}</td><td>${r.Finds}</td><td>${r.FP}</td><td>${r["Elevation (m)"]}</td><td>${extra}</td></tr>`;
+                html += `<tr><td>${r.ID}</td><td>${r["Cache name"]}</td><td>${r.Type}</td><td>${r.Size}</td><td>${r.Difficulty}</td><td>${r.Terrain}</td><td>${r.Country || ''}</td><td>${r.Region || ''}</td><td>${r.County || ''}</td><td>${hiddenDate}</td><td>${r.Finds}</td><td>${r.FP}</td><td>${r["Elevation (m)"]}</td><td>${extra}</td></tr>`;
             });
             html += "</tbody></table>";
             document.getElementById("results").innerHTML = html;
@@ -1004,7 +1006,7 @@
 
             dataRows.forEach(cells => {
                 const [
-                    id, name, type, size, difficulty, terrain,
+                    id, name, type, size, difficulty, terrain, country,
                     region, county, hiddenStr, finds, fp, elev, reasonsText
                 ] = cells.map(text => text ? text.trim() : '');
 
@@ -1073,7 +1075,7 @@
                 cache.appendChild(gsterrain);
 
                 const gscountry = doc.createElementNS(nsGroundspeak, "country");
-                gscountry.textContent = match.Country || "";
+                gscountry.textContent = country || match.Country || "";
                 cache.appendChild(gscountry);
 
                 const gsstate = doc.createElementNS(nsGroundspeak, "state");
