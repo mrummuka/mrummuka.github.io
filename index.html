@@ -89,6 +89,19 @@ SOFTWARE.
             margin-top: 2px;
             text-decoration: none;
         }
+        .filter-control {
+            margin: 1em 0;
+            padding: 0.5em;
+            background: #f5f5f5;
+            border-radius: 4px;
+        }
+        .filter-control label {
+            margin-right: 1em;
+            font-weight: bold;
+        }
+        .filter-control input {
+            margin-right: 0.5em;
+        }
     </style>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -287,10 +300,25 @@ SOFTWARE.
     </symbol>
 </svg>
     <h1>GPX Analysis Tool</h1>
+    <div class="filter-control">
+        <label>Display:</label>
+        <label>
+            <input type="radio" name="displayFilter" value="all" checked> All possible values
+        </label>
+        <label>
+            <input type="radio" name="displayFilter" value="gpx"> Only values found in GPX
+        </label>
+    </div>
     <input type="file" id="fileInput" accept=".gpx" />
     <div id="results"></div>
 
     <script>
+        const ALL_DIFFICULTIES = [1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0];
+        const ALL_TERRAINS = [1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0];
+        const ALL_DAYS = Array.from({length: 31}, (_, i) => i + 1);
+        const ALL_MONTHS = Array.from({length: 12}, (_, i) => i + 1);
+        const ALL_WEEKDAYS = [0, 1, 2, 3, 4, 5, 6]; // 0=Sunday, 6=Saturday
+        const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
         const ATTRIBUTE_NAMES = {
             1: { value: "Dogs", icon: "dogs" },
             2: { value: "Access or parking fee", icon: "fee" },
@@ -388,13 +416,13 @@ SOFTWARE.
         };
 
         const TYPE_NAMES_FILTER = {
+            "Traditional Cache": "Traditional Cache",
+            "Multi-cache": "Multi-cache",
+            "Unknown Cache": "Unknown Cache",
             "Earthcache": "Earthcache",
             "Virtual Cache": "Virtual Cache",
             "Letterbox Hybrid": "Letterbox Hybrid",
-            "Traditional Cache": "Traditional Cache",
-            "Multi-cache": "Multi-cache",
             "Wherigo Cache": "Wherigo Cache",
-            "Unknown Cache": "Unknown Cache",
             // Add more as needed
         };
 
@@ -412,6 +440,8 @@ SOFTWARE.
         const ATTRIBUTE_URL = "https://github.com/cgeo/cgeo/tree/master/main/project/attributes/svgs/";
         let dtTypeFilter = null; // null means no filter
         let dtSizeFilter = null;
+
+        
 
 function parseGPX(file) {
     const parser = new DOMParser();
@@ -672,8 +702,16 @@ async function fetchElevationsInChunks(latList, lonList, chunkSize = 50) {
     return elevationResults;
 }
 
+function getDisplayFilter() {
+            return document.querySelector('input[name="displayFilter"]:checked').value;
+}
+
 
 function displayResults(stats) {
+    // Get current year for year range
+    const currentYear = new Date().getFullYear();
+    const ALL_YEARS = Array.from({length: currentYear - 2000 + 1}, (_, i) => 2000 + i);
+
     document.getElementById("results").innerHTML = `
         <h2>Analysis Results</h2>
         <p><strong>Total caches:</strong> ${stats.total}</p>
@@ -687,32 +725,32 @@ function displayResults(stats) {
 
 <div class="flex-row">
         <div>
-            <h3>Types in gpx</h3>
-            ${generateTable(stats.types, "Type", "Count", false, true)}
+            <h3>Types</h3>
+            ${generateTable(stats.types, "Type", "Count", false, true, Object.keys(TYPE_NAMES_ICONS))}
         </div>
         <div>
-            <h3>Sizes in gpx</h3>
-            ${generateTable(stats.sizes, "Size", "Count")}
+            <h3>Sizes</h3>
+            ${generateTable(stats.sizes, "Size", "Count", false, false, Object.keys(SIZE_NAMES))}
         </div>
     </div>
     <div class="flex-row">
         <div>
             <h3>Caches by difficulties</h3>
-            ${generateTable(stats.difficulties, "Difficulty", "Count", true)}
+            ${generateTable(stats.difficulties, "Difficulty", "Count", true, false, ALL_DIFFICULTIES)}
         </div>
         <div>
             <h3>Caches by terrains</h3>
-            ${generateTable(stats.terrains, "Terrain", "Count", true)}
+            ${generateTable(stats.terrains, "Terrain", "Count", true, false, ALL_TERRAINS)}
         </div>
     </div>
         <div class="flex-row">
         <div>
             <h3>Caches by year hidden</h3>
-            ${generateTable(stats.years, "Year", "Count", true)}
+            ${generateTable(stats.years, "Year", "Count", true, false, ALL_YEARS)}
         </div>
         <div>
             <h3>Caches by day of month hidden</h3>
-            ${generateTable(stats.days, "Day", "Count", true)}
+            ${generateTable(stats.days, "Day", "Count", true, false, ALL_DAYS)}
         </div>
     </div>
         </div>
@@ -859,14 +897,27 @@ function displayResults(stats) {
 }
 
 
-function generateTable(data, col1, col2, sortNumeric = false, isTypeTable = false) {
-    let entries = Object.entries(data);
+ function generateTable(data, col1, col2, sortNumeric = false, isTypeTable = false, allPossibleValues = null) {
+    let entries;
+    const showAll = getDisplayFilter() === 'all';
+    
+    if (showAll && allPossibleValues) {
+        // Create entries for all possible values, using data where available
+        entries = allPossibleValues.map(value => {
+            const key = sortNumeric ? value.toString() : value;
+            return [key, data[key] || 0];
+        });
+    } else {
+        // Use only values found in data
+        entries = Object.entries(data);
+    }
+   
     if (sortNumeric) {
         entries = entries.sort((a, b) => parseFloat(a[0]) - parseFloat(b[0]));
     } else {
         entries = entries.sort();
     }
- const rows = entries.map(([key, value]) => {
+    const rows = entries.map(([key, value]) => {
         let displayKey = key;
         if (isTypeTable) {
             const iconId = TYPE_NAMES_ICONS[key];
@@ -879,24 +930,45 @@ function generateTable(data, col1, col2, sortNumeric = false, isTypeTable = fals
 }
 
 function generateMonthTable(data, col1, col2) {
-    let entries = Object.entries(data)
-        .map(([num, count]) => [
-            new Date(2000, num - 1, 1).toLocaleString('en-US', { month: 'long' }),
-            count
-        ])
-        .sort((a, b) => new Date(Date.parse(a[0] +" 1, 2000")) - new Date(Date.parse(b[0] +" 1, 2000")));
+    const showAll = getDisplayFilter() === 'all';
+    let entries;
+    
+    if (showAll) {
+        // Create entries for all months
+        entries = ALL_MONTHS.map(monthNum => {
+            const monthName = new Date(2000, monthNum - 1, 1).toLocaleString('en-US', { month: 'long' });
+            return [monthName, data[monthNum] || 0];
+        });
+    } else {
+        // Only show months with data
+        entries = Object.entries(data)
+            .map(([num, count]) => [
+                new Date(2000, num - 1, 1).toLocaleString('en-US', { month: 'long' }),
+                count
+            ]);
+    }
+    
+    entries.sort((a, b) => new Date(Date.parse(a[0] +" 1, 2000")) - new Date(Date.parse(b[0] +" 1, 2000")));
     const rows = entries.map(([key, value]) => `<tr><td>${key}</td><td>${value}</td></tr>`).join("");
     return `<table><tr><th>${col1}</th><th>${col2}</th></tr>${rows}</table>`;
 }
 
+
 function generateWeekdayTable(data, col1, col2) {
-    // Weekday order: Monday (1) to Sunday (0)
-    const weekdayOrder = [1,2,3,4,5,6,0];
-    const rows = weekdayOrder.map(num => {
-        const name = new Date(2000, 0, 2 + num - (num === 0 ? 7 : 0)).toLocaleString('en-US', { weekday: 'long' });
-        const value = data[num] || 0;
+    const showAll = getDisplayFilter() === 'all';
+    const weekdayOrder = [1,2,3,4,5,6,0]; // Monday to Sunday
+    
+    let rows = weekdayOrder.map(weekdayNum => {
+        const name = WEEKDAY_NAMES[weekdayNum];
+        const value = showAll ? (data[weekdayNum] || 0) : (data[weekdayNum] || null);
+        
+        if (!showAll && value === null) {
+            return ''; // Skip this row
+        }
+        
         return `<tr><td>${name}</td><td>${value}</td></tr>`;
-    }).join("");
+    }).filter(row => row !== '').join("");
+    
     return `<table><tr><th>${col1}</th><th>${col2}</th></tr>${rows}</table>`;
 }
 
@@ -960,6 +1032,8 @@ function generateAttribTable(attributes) {
 }*/
 
 function generateAttribIconTable(attributes) {
+     const showAll = getDisplayFilter() === 'all';
+
     // Show all attributes, even those with zero count
     let attribArr = Object.entries(ATTRIBUTE_NAMES)
         .map(([aid, info]) => ({
@@ -968,6 +1042,10 @@ function generateAttribIconTable(attributes) {
             count: attributes[aid] || 0
         }))
         .sort((a, b) => a.name.localeCompare(b.name));
+
+     if (!showAll) {
+                attribArr = attribArr.filter(a => a.count > 0);
+    }
 
     let html = `<div class="attributetable">`;
         attribArr.forEach(a => {
@@ -979,8 +1057,6 @@ function generateAttribIconTable(attributes) {
         });
         html += `</div>`;
 
-
-    html += "</tbody></table>";
     return html;
 }
 
@@ -1380,6 +1456,16 @@ document.getElementById("fileInput").addEventListener("change", function(event) 
         parseGPX(file);
     }
 });
+
+// Add event listener for filter changes
+document.querySelectorAll('input[name="displayFilter"]').forEach(radio => {
+    radio.addEventListener('change', function() {
+        if (document.getElementById("fileInput").files.length > 0) {
+            parseGPX(document.getElementById("fileInput").files[0]);
+        }
+    });
+});
+
 </script>
 </body>
 </html>
