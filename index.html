@@ -102,6 +102,23 @@ SOFTWARE.
         .filter-control input {
             margin-right: 0.5em;
         }
+        .filter-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    max-height: 180px;
+    overflow-y: auto;
+}
+.filter-item {
+    padding: 4px 8px;
+    cursor: pointer;
+    border-radius: 3px;
+}
+.filter-item.selected {
+    background: #1976d2;
+    color: #fff;
+    font-weight: bold;
+}
     </style>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -437,6 +454,9 @@ SOFTWARE.
             // ...add all sizes you use...
         };
 
+        let selectedCountries = [];
+        let selectedRegions = [];
+
         const ATTRIBUTE_URL = "https://github.com/cgeo/cgeo/tree/master/main/project/attributes/svgs/";
         let dtTypeFilter = null; // null means no filter
         let dtSizeFilter = null;
@@ -462,33 +482,13 @@ function parseGPX(file) {
         let cacheList = [];
         const latList = [];
         const lonList = [];
-        const types = {};
-        const sizes = {};
-        const difficulties = {};
-        const terrains = {};
-        const hiddenDates = {};
-        const years = {};
-        const days = {};
-        const months = {};
-        const weekdays = {};
-        const diffTerrPairs = {};
-        const attributes = {};
-        const countries = new Set();
-        const states = new Set();
         let oldestDate = null;
         let favoSum = 0;
-        let t5BoatCaches = 0;
-        let tbelow5BoatCaches = 0;
-        let boatSwimWadingCaches = 0;
-        let elevation = null;
+        let attributes = {};
 
-        /*
-        // Pre-fill types with zeros to always show all types
-        // commented out since this might be more useful to implement as toggle option
-        Object.keys(TYPE_NAMES_ICONS).forEach(type => {
-            types[type] = 0;
-        });
-        */
+        let countries = {};
+        let regions = {};
+
 
         for (let wpt of wpts) {
             const cache = wpt.getElementsByTagNameNS(ns.groundspeak, "cache")[0];
@@ -506,8 +506,6 @@ function parseGPX(file) {
                 continue; // to skip
                 console.warn(`Skipping unexpected cache type: "${type}"`);
             }
-
-            types[type] = (types[type] || 0) + 1;
 
             total++;
 
@@ -528,48 +526,32 @@ function parseGPX(file) {
 
             // Size/Container
             const container = cache.getElementsByTagNameNS(ns.groundspeak, "container")[0]?.textContent || "?";
-            sizes[container] = (sizes[container] || 0) + 1;
-
+            
             // Difficulty/Terrain
             const difficulty = parseFloat(cache.getElementsByTagNameNS(ns.groundspeak, "difficulty")[0]?.textContent || "0");
             const terrain = parseFloat(cache.getElementsByTagNameNS(ns.groundspeak, "terrain")[0]?.textContent || "0");
-            difficulties[difficulty] = (difficulties[difficulty] || 0) + 1;
-            terrains[terrain] = (terrains[terrain] || 0) + 1;
-            diffTerrPairs[`${difficulty}/${terrain}`] = (diffTerrPairs[`${difficulty}/${terrain}`] || 0) + 1;
 
             // Hidden date
             const hidden = wpt.getElementsByTagName("time")[0]?.textContent || "";
-            hiddenDates[hidden] = (hiddenDates[hidden] || 0) + 1;
 
             if (hidden) {
                 const date = new Date(hidden);
 
                 // Hidden year
                 const year = date.getFullYear();
-                years[year] = (years[year] || 0) + 1;
 
                 // Hidden day of month
                 const day = date.getDate();
-                days[day] = (days[day] || 0) + 1;
                 // Hidden month
                 const month = date.getMonth() + 1; // Months are 0-indexed
-                months[month] = (months[month] || 0) + 1;
 
                 // Hidden day of week
                 const weekday = date.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
-                weekdays[weekday] = (weekdays[weekday] || 0) + 1;
-
-                // Oldest hidden date
-                if (!oldestDate || date < oldestDate) {
-                    oldestDate = date;
-                }
             }
 
             // Country/State
             const country = cache.getElementsByTagNameNS(ns.groundspeak, "country")[0]?.textContent || "";
             const state = cache.getElementsByTagNameNS(ns.groundspeak, "state")[0]?.textContent || "";
-            if (country.trim()) countries.add(country.trim());
-            if (state.trim()) states.add(state.trim());
 
             // Attributes
             const attSet = new Set();
@@ -583,27 +565,29 @@ function parseGPX(file) {
                 }
             }
             // Special conditions
+            let ist5boatcache = false;
+            let istbelow5boatcache = false;
+            let isboatswimwadecache = false;
+
             // T<5 + Boat attribute
             if (attSet.has(4) && terrain !== 5.0) {
-                tbelow5BoatCaches++;
+                istbelow5boatcache=true;
             }
             // T5 + Boat attribute
             if (attSet.has(4) && terrain === 5.0) {
-                t5BoatCaches++;
+                ist5boatcache=true;
             }
             // Boat + Swim + Wading attributes
             if ([4, 11, 12].every(id => attSet.has(id))) {
-                boatSwimWadingCaches++; 
+                isboatswimwadecache=true;
             }
 
-            // Favo points (gsak)
             let fp = 0;
             const wptExt = wpt.getElementsByTagNameNS(ns.gsak, "wptExtension")[0];
             if (wptExt) {
                 const favElem = wptExt.getElementsByTagNameNS(ns.gsak, "FavPoints")[0];
                 if (favElem && !isNaN(favElem.textContent)) {
                     fp = parseInt(favElem.textContent, 10);
-                    favoSum += fp;
                 }
             }
 
@@ -626,7 +610,10 @@ function parseGPX(file) {
                 attributes: Array.from(attSet).map(id => ({
                     id,
                     count: attributes[id] || 0
-                }))
+                })),
+                istbelow5boatcache,
+                ist5boatcache,
+                isboatswimwadecache
             });
 
         }
@@ -640,39 +627,163 @@ function parseGPX(file) {
             cache.elevation = elevations[i] ?? null;
         });
 
-        displayResults({
-            cacheCoords,
-            elevation,
-            cacheList,
-            total,
-            types,
-            sizes,
-            difficulties,
-            terrains,
-            diffTerrPairs,
-            years,
-            days,
-            months,
-            weekdays,
-            attributes,
-            countries: Array.from(countries),
-            states: Array.from(states),
-            oldestDate,
-            t5BoatCaches,
-            tbelow5BoatCaches,
-            boatSwimWadingCaches,
-            favoSum,
+        // Build country and region objects
+        cacheList.forEach(cache => {
+            if (cache.country) {
+                countries[cache.country] = (countries[cache.country] || 0) + 1;
+            }
+            if (cache.region) {
+                regions[cache.region] = (regions[cache.region] || 0) + 1;
+            }
         });
+
+        window._fullCacheList = cacheList;
+        updateFilteredResults();
+
     };
 
     reader.readAsText(file);
 }
 
+// After parsing GPX and before calling displayResults
+function populateFilters(countriesObj, regionsObj) {
+    const countryList = document.getElementById('countryFilterList');
+    const regionList = document.getElementById('regionFilterList');
+    countryList.innerHTML = Object.keys(countriesObj)
+        .sort((a, b) => a.localeCompare(b))
+        .map(c => `<div class="filter-item${selectedCountries.includes(c) ? ' selected' : ''}" data-value="${c}">${c}</div>`).join('');
+    regionList.innerHTML = Object.keys(regionsObj)
+        .map(r => `<div class="filter-item${selectedRegions.includes(r) ? ' selected' : ''}" data-value="${r}">${r}</div>`).join('');
+}
+function computeStatsFromCacheList(cacheList) {
+    const types = {};
+    const sizes = {};
+    const difficulties = {};
+    const terrains = {};
+    const diffTerrPairs = {};
+    const years = {};
+    const days = {};
+    const months = {};
+    const weekdays = {};
+    const attributes = {};
+    const countries = {};
+    const regions = {};
+    let oldestDate = null;
+    let favoSum = 0;
+    let t5BoatCaches = 0;
+    let tbelow5BoatCaches = 0;
+    let boatSwimWadingCaches = 0;
+
+    let cacheCoords = [];
+    let elevation = null;
+
+    for (let cache of cacheList) {
+        types[cache.type] = (types[cache.type] || 0) + 1;
+        sizes[cache.size] = (sizes[cache.size] || 0) + 1;
+        difficulties[cache.difficulty] = (difficulties[cache.difficulty] || 0) + 1;
+        terrains[cache.terrain] = (terrains[cache.terrain] || 0) + 1;
+        diffTerrPairs[`${cache.difficulty}/${cache.terrain}`] = (diffTerrPairs[`${cache.difficulty}/${cache.terrain}`] || 0) + 1;
+
+        if (cache.hidden) {
+            const date = new Date(cache.hidden);
+            const year = date.getFullYear();
+            years[year] = (years[year] || 0) + 1;
+            const day = date.getDate();
+            days[day] = (days[day] || 0) + 1;
+            const month = date.getMonth() + 1;
+            months[month] = (months[month] || 0) + 1;
+            const weekday = date.getDay();
+            weekdays[weekday] = (weekdays[weekday] || 0) + 1;
+            if (!oldestDate || date < oldestDate) {
+                oldestDate = date;
+            }
+        }
+
+        if (cache.country) {
+            countries[cache.country] = (countries[cache.country] || 0) + 1;
+        }
+        if (cache.region) {
+            regions[cache.region] = (regions[cache.region] || 0) + 1;
+        }
+
+        cacheCoords.push([cache.lat, cache.lon]);
+
+        cache.attributes.forEach(att => {
+            attributes[att.id] = (attributes[att.id] || 0) + 1;
+        });
+
+        // Special conditions
+        if (cache.attributes.some(a => a.id === 4) && cache.terrain !== 5.0) {
+            tbelow5BoatCaches++;
+        }
+        if (cache.attributes.some(a => a.id === 4) && cache.terrain === 5.0) {
+            t5BoatCaches++;
+        }
+        if ([4, 11, 12].every(id => cache.attributes.some(a => a.id === id))) {
+            boatSwimWadingCaches++;
+        }
+
+        favoSum += cache.fp || 0;
+    }
+
+    return {
+        cacheCoords,
+        elevation,
+        cacheList,
+        total: cacheList.length,
+        types,
+        sizes,
+        difficulties,
+        terrains,
+        diffTerrPairs,
+        years,
+        days,
+        months,
+        weekdays,
+        attributes,
+        countries,
+        regions,
+        oldestDate,
+        t5BoatCaches,
+        tbelow5BoatCaches,
+        boatSwimWadingCaches,
+        favoSum,
+    };
+}
+
+function getAllCountriesAndRegions(cacheList) {
+    const countries = {};
+    const regions = {};
+    cacheList.forEach(cache => {
+        if (cache.country) {
+            countries[cache.country] = (countries[cache.country] || 0) + 1;
+        }
+        if (cache.region) {
+            regions[cache.region] = (regions[cache.region] || 0) + 1;
+        }
+    });
+    return { countries, regions };
+}
+
+function getFilteredCacheList(cacheList, selectedCountries, selectedRegions) {
+    return cacheList.filter(cache => {
+        const countryMatch = selectedCountries.length === 0 || selectedCountries.includes(cache.country);
+        const regionMatch = selectedRegions.length === 0 || selectedRegions.includes(cache.region);
+        return countryMatch && regionMatch;
+    });
+}
+
 async function fetchElevationsInChunks(latList, lonList, chunkSize = 50) {
     const elevationResults = [];
-    console.debug("Fetching elevations for", latList.length, "coordinates in chunks of", chunkSize);
+    let limitExceeded = false;
 
     for (let i = 0; i < latList.length; i += chunkSize) {
+        if (limitExceeded) {
+            // Fill remaining with null
+            elevationResults.push(...new Array(latList.length - elevationResults.length).fill(null));
+            break;
+        }
+
         const latChunk = latList.slice(i, i + chunkSize);
         const lonChunk = lonList.slice(i, i + chunkSize);
 
@@ -685,7 +796,12 @@ async function fetchElevationsInChunks(latList, lonList, chunkSize = 50) {
             const resp = await fetch(url);
             const data = await resp.json();
 
-            if (Array.isArray(data.elevation)) {
+            if (data.error && data.reason && data.reason.includes("Minutely API request limit exceeded")) {
+                console.warn("Elevation API limit exceeded, stopping further requests.");
+                limitExceeded = true;
+                elevationResults.push(...new Array(latChunk.length).fill(null));
+                // Fill remaining with null in next loop
+            } else if (Array.isArray(data.elevation)) {
                 elevationResults.push(...data.elevation);
             } else {
                 console.warn("Unexpected elevation response:", data);
@@ -696,9 +812,6 @@ async function fetchElevationsInChunks(latList, lonList, chunkSize = 50) {
             elevationResults.push(...new Array(latChunk.length).fill(null));
         }
     }
-    console.debug("Fetched elevations:", elevationResults.length, "results");
-    console.debug("Elevation results:", elevationResults);
-
     return elevationResults;
 }
 
@@ -714,56 +827,72 @@ function displayResults(stats) {
 
     document.getElementById("results").innerHTML = `
         <h2>Analysis Results</h2>
+        <!-- Add after <h2>Analysis Results</h2> -->
+        <div class="flex-row" style="margin-bottom:1em;">
+<div>
+    <label for="countryFilterList"><b>Filter by Country:</b></label><br>
+    <div id="countryFilterList" class="filter-list"></div>
+</div>
+<div>
+    <label for="regionFilterList"><b>Filter by Region:</b></label><br>
+    <div id="regionFilterList" class="filter-list"></div>
+</div>
+        </div>
         <p><strong>Total caches:</strong> ${stats.total}</p>
         <p><strong>Oldest cache:</strong> ${stats.oldestDate ? stats.oldestDate.toISOString().slice(0,10) : "?"}</p>
         <p><strong>Total favorite points:</strong> ${stats.favoSum}</p>
-        <h3>Countries and Regions</h3>
-        <p><strong>Countries:</strong> ${stats.countries.join(", ")}</p>
-        <p><strong>Regions:</strong> ${stats.states.join(", ")}</p>
-                <h3>Caches on map</h3>
-                    <div id="map" style="height: 400px; margin: 2em 0;"></div>
-
-<div class="flex-row">
-        <div>
-            <h3>Types</h3>
-            ${generateTable(stats.types, "Type", "Count", false, true, Object.keys(TYPE_NAMES_ICONS))}
-        </div>
-        <div>
-            <h3>Sizes</h3>
-            ${generateTable(stats.sizes, "Size", "Count", false, false, Object.keys(SIZE_NAMES))}
-        </div>
-    </div>
-    <div class="flex-row">
-        <div>
-            <h3>Caches by difficulties</h3>
-            ${generateTable(stats.difficulties, "Difficulty", "Count", true, false, ALL_DIFFICULTIES)}
-        </div>
-        <div>
-            <h3>Caches by terrains</h3>
-            ${generateTable(stats.terrains, "Terrain", "Count", true, false, ALL_TERRAINS)}
-        </div>
-    </div>
         <div class="flex-row">
-        <div>
-            <h3>Caches by year hidden</h3>
-            ${generateTable(stats.years, "Year", "Count", true, false, ALL_YEARS)}
+            <div>
+                <h3>Countries</h3>
+                ${generateTable(stats.countries, "Country", "Count", false, false, Object.keys(stats.countries))}
+            </div>
+            <div>
+                <h3>Regions</h3>
+                ${generateTable(stats.regions, "Region", "Count", false, false, Object.keys(stats.regions))}
+            </div>
         </div>
-        <div>
-            <h3>Caches by day of month hidden</h3>
-            ${generateTable(stats.days, "Day", "Count", true, false, ALL_DAYS)}
-        </div>
-    </div>
+        <h3>Caches on map</h3>
+        <div id="map" style="height: 400px; margin: 2em 0;"></div>
+        <div class="flex-row">
+            <div>
+                <h3>Types</h3>
+                ${generateTable(stats.types, "Type", "Count", false, true, Object.keys(TYPE_NAMES_ICONS))}
+            </div>
+            <div>
+                <h3>Sizes</h3>
+                ${generateTable(stats.sizes, "Size", "Count", false, false, Object.keys(SIZE_NAMES))}
+            </div>
         </div>
         <div class="flex-row">
-        <div>
-            <h3>Caches by month hidden</h3>
-            ${generateMonthTable(stats.months, "Month", "Count")}
+            <div>
+                <h3>Caches by difficulties</h3>
+                ${generateTable(stats.difficulties, "Difficulty", "Count", true, false, ALL_DIFFICULTIES)}
+            </div>
+            <div>
+                <h3>Caches by terrains</h3>
+                ${generateTable(stats.terrains, "Terrain", "Count", true, false, ALL_TERRAINS)}
+            </div>
         </div>
-        <div>
-            <h3>Caches by day of week hidden</h3>
-            ${generateWeekdayTable(stats.weekdays, "Day of week", "Count", true)}
+        <div class="flex-row">
+            <div>
+                <h3>Caches by year hidden</h3>
+                ${generateTable(stats.years, "Year", "Count", true, false, ALL_YEARS)}
+            </div>
+            <div>
+                <h3>Caches by day of month hidden</h3>
+                ${generateTable(stats.days, "Day", "Count", true, false, ALL_DAYS)}
+            </div>
         </div>
-    </div>
+        <div class="flex-row">
+            <div>
+                <h3>Caches by month hidden</h3>
+                ${generateMonthTable(stats.months, "Month", "Count")}
+            </div>
+            <div>
+                <h3>Caches by day of week hidden</h3>
+                ${generateWeekdayTable(stats.weekdays, "Day of week", "Count", true)}
+            </div>
+        </div>
         <h3>Difficulty / Terrain combos</h3>
         <div id="dt-matrix-container"></div>
         <h3>Top 5 favored caches (max fp)</h3>
@@ -786,6 +915,10 @@ function displayResults(stats) {
         </ul>
 
     `;
+
+    const all = getAllCountriesAndRegions(window._fullCacheList);
+    populateFilters(all.countries, all.regions);
+
     renderTopBottomElevationTable(stats.cacheList);
 
     renderDTMatrix(stats);
@@ -795,7 +928,7 @@ function displayResults(stats) {
         window._leafletMap = null;
     }
 
-    if (stats.cacheCoords && stats.cacheCoords.length > 0) {
+    if (stats.cacheCoords && stats.cacheCoords.length > 0 && stats.cacheCoords[0]) {
         // Center map on the first cache, or use a default
         const center = stats.cacheCoords[0];
         const map = L.map('map').setView(center, 8);
@@ -893,6 +1026,8 @@ function displayResults(stats) {
                     }
                 }).addTo(map);
             });
+
+        setupFilterListeners();
     }
 }
 
@@ -1450,6 +1585,37 @@ function generateDTMatrix(cacheList, typeFilter = null, sizeFilter = null) {
     return html;
 }
 
+function setupFilterListeners() {
+    document.querySelectorAll('#countryFilterList .filter-item').forEach(item => {
+        item.onclick = function() {
+            const value = this.getAttribute('data-value');
+            if (selectedCountries.includes(value)) {
+                selectedCountries = selectedCountries.filter(c => c !== value);
+            } else {
+                selectedCountries.push(value);
+            }
+            updateFilteredResults();
+        };
+    });
+    document.querySelectorAll('#regionFilterList .filter-item').forEach(item => {
+        item.onclick = function() {
+            const value = this.getAttribute('data-value');
+            if (selectedRegions.includes(value)) {
+                selectedRegions = selectedRegions.filter(r => r !== value);
+            } else {
+                selectedRegions.push(value);
+            }
+            updateFilteredResults();
+        };
+    });
+}
+
+function updateFilteredResults() {
+    const filteredCacheList = getFilteredCacheList(window._fullCacheList, selectedCountries, selectedRegions);
+    const stats = computeStatsFromCacheList(filteredCacheList);
+    displayResults(stats);
+}
+
 document.getElementById("fileInput").addEventListener("change", function(event) {
     const file = event.target.files[0];
     if (file) {
@@ -1460,9 +1626,7 @@ document.getElementById("fileInput").addEventListener("change", function(event) 
 // Add event listener for filter changes
 document.querySelectorAll('input[name="displayFilter"]').forEach(radio => {
     radio.addEventListener('change', function() {
-        if (document.getElementById("fileInput").files.length > 0) {
-            parseGPX(document.getElementById("fileInput").files[0]);
-        }
+        updateFilteredResults();
     });
 });
 
