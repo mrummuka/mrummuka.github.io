@@ -103,32 +103,93 @@ SOFTWARE.
             margin-right: 0.5em;
         }
         .filter-list {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    max-height: 180px;
-    overflow-y: auto;
-}
-.filter-item {
-    padding: 4px 8px;
-    cursor: pointer;
-    border-radius: 3px;
-}
-.filter-item.selected {
-    background: #1976d2;
-    color: #fff;
-    font-weight: bold;
-}
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            max-height: 180px;
+            overflow-y: auto;
+        }
+        .filter-item {
+            padding: 4px 8px;
+            cursor: pointer;
+            border-radius: 3px;
+        }
+        .filter-item.selected {
+            background: #1976d2;
+            color: #fff;
+            font-weight: bold;
+        }
+        .countries-cloud {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+            font-size: 0.8em;
+            margin-bottom: 1em;
+        }
+        .country-tag {
+            background: #f8f8f8;
+            color: #1976d2;
+            border-radius: 2px;
+            padding: 2px 6px;
+            margin: 2px 0;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .country-tag img {
+            width: 18px;
+            height: 12px;
+            object-fit: cover;
+            margin-right: 4px;
+        }
+        .country-tag .country-count {
+            color: #888;
+            font-weight: normal;
+            margin-left: 2px;
+        }
+        .country-tag .country-percent {
+            color: #aaa;
+            font-size: 0.8em;
+            margin-left: 2px;
+        }
+        .regions-cloud {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+            font-size: 0.8em;
+            margin-bottom: 1em;
+        }
+        .region-tag {
+            background: #e3f2fd;
+            color: #1976d2;
+            border-radius: 2px;
+            padding: 2px 6px;
+            margin: 2px 0;
+            font-weight: bold;
+        }
+        .region-tag .region-count {
+            color: #888;
+            font-weight: normal;
+            margin-left: 2px;
+        }
     </style>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
+    <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
 
     <!-- Font Awesome for globe icon -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css" />
 
     <!-- Leaflet.awesome-markers CSS & JS -->
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet.awesome-markers@2.0.5/dist/leaflet.awesome-markers.css">
-<script src="https://cdn.jsdelivr.net/npm/leaflet.awesome-markers@2.0.5/dist/leaflet.awesome-markers.js"></script></head>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet.awesome-markers@2.0.5/dist/leaflet.awesome-markers.css">
+    <script src="https://cdn.jsdelivr.net/npm/leaflet.awesome-markers@2.0.5/dist/leaflet.awesome-markers.js"></script>
+
+</head>
+
 <body>
     <svg width="0" height="0" class="hidden"
     xmlns="http://www.w3.org/2000/svg"
@@ -461,6 +522,10 @@ SOFTWARE.
         let dtTypeFilter = null; // null means no filter
         let dtSizeFilter = null;
 
+        let filterRequestId = 0;
+        let lastMapInstance = null;
+        let lastMapRequestId = 0;
+
         
 
 function parseGPX(file) {
@@ -649,10 +714,24 @@ function parseGPX(file) {
 function populateFilters(countriesObj, regionsObj) {
     const countryList = document.getElementById('countryFilterList');
     const regionList = document.getElementById('regionFilterList');
+
+    // Always show all countries, sorted alphabetically
     countryList.innerHTML = Object.keys(countriesObj)
         .sort((a, b) => a.localeCompare(b))
         .map(c => `<div class="filter-item${selectedCountries.includes(c) ? ' selected' : ''}" data-value="${c}">${c}</div>`).join('');
-    regionList.innerHTML = Object.keys(regionsObj)
+
+    // Filter regions by selected countries
+    let regionKeys = Object.keys(regionsObj);
+    if (selectedCountries.length > 0) {
+        // Only show regions that belong to selected countries
+        // Find regions from caches in selected countries
+        const filteredCaches = window._fullCacheList.filter(cache => selectedCountries.includes(cache.country));
+        const regionSet = new Set(filteredCaches.map(cache => cache.region).filter(Boolean));
+        regionKeys = Array.from(regionSet);
+    }
+
+    regionList.innerHTML = regionKeys
+        .sort((a, b) => a.localeCompare(b))
         .map(r => `<div class="filter-item${selectedRegions.includes(r) ? ' selected' : ''}" data-value="${r}">${r}</div>`).join('');
 }
 function computeStatsFromCacheList(cacheList) {
@@ -796,11 +875,17 @@ async function fetchElevationsInChunks(latList, lonList, chunkSize = 50) {
             const resp = await fetch(url);
             const data = await resp.json();
 
-            if (data.error && data.reason && data.reason.includes("Minutely API request limit exceeded")) {
+            console.log("[DEBUG] Elevation API response:", data);
+
+            // More robust error check
+            if (
+                (data.error && data.reason && data.reason.toLowerCase().includes("limit")) ||
+                (data.reason && data.reason.toLowerCase().includes("limit")) ||
+                (data.error && typeof data.error === "string" && data.error.toLowerCase().includes("limit"))
+            ) {
                 console.warn("Elevation API limit exceeded, stopping further requests.");
                 limitExceeded = true;
                 elevationResults.push(...new Array(latChunk.length).fill(null));
-                // Fill remaining with null in next loop
             } else if (Array.isArray(data.elevation)) {
                 elevationResults.push(...data.elevation);
             } else {
@@ -820,7 +905,7 @@ function getDisplayFilter() {
 }
 
 
-function displayResults(stats) {
+function displayResults(stats, requestId) {
     // Get current year for year range
     const currentYear = new Date().getFullYear();
     const ALL_YEARS = Array.from({length: currentYear - 2000 + 1}, (_, i) => 2000 + i);
@@ -838,21 +923,24 @@ function displayResults(stats) {
     <div id="regionFilterList" class="filter-list"></div>
 </div>
         </div>
-        <p><strong>Total caches:</strong> ${stats.total}</p>
-        <p><strong>Oldest cache:</strong> ${stats.oldestDate ? stats.oldestDate.toISOString().slice(0,10) : "?"}</p>
-        <p><strong>Total favorite points:</strong> ${stats.favoSum}</p>
         <div class="flex-row">
             <div>
-                <h3>Countries</h3>
-                ${generateTable(stats.countries, "Country", "Count", false, false, Object.keys(stats.countries))}
+            <p><strong>Total caches:</strong> ${stats.total}</p>
+            <p><strong>Total favorite points:</strong> ${stats.favoSum}</p>
             </div>
             <div>
-                <h3>Regions</h3>
-                ${generateTable(stats.regions, "Region", "Count", false, false, Object.keys(stats.regions))}
+                <p><strong>Countries:</strong> ${Object.keys(stats.countries).length}</p>
+                <p><strong>Regions:</strong> ${Object.keys(stats.regions).length}</p>
             </div>
         </div>
         <h3>Caches on map</h3>
         <div id="map" style="height: 400px; margin: 2em 0;"></div>
+        <div class="flex-row">
+            <div>
+            ${generateCountriesCloud(stats.countries, stats.total)}                
+            ${generateRegionsCloud(stats.regions, stats.total)}
+            </div>
+        </div>
         <div class="flex-row">
             <div>
                 <h3>Types</h3>
@@ -922,13 +1010,40 @@ function displayResults(stats) {
     renderTopBottomElevationTable(stats.cacheList);
 
     renderDTMatrix(stats);
-    // Remove any previous map instance
+
+    console.log("[DEBUG] displayResults: filtered cache count:", stats.cacheList.length);
+
+       // Always use the same map container
+    let mapDiv = document.getElementById('map');
+    if (!mapDiv) {
+        // Create it if missing
+        mapDiv = document.createElement('div');
+        mapDiv.id = 'map';
+        mapDiv.style.height = '400px';
+        mapDiv.style.margin = '2em 0';
+        const resultsDiv = document.getElementById('results');
+        const h3s = resultsDiv.querySelectorAll('h3');
+        for (let h3 of h3s) {
+            if (h3.textContent.trim() === 'Caches on map') {
+                h3.parentNode.insertBefore(mapDiv, h3.nextSibling);
+                break;
+            }
+        }
+    } else {
+        // Clear previous map container contents
+        mapDiv.innerHTML = '';
+    }
+
+    // Remove previous map instance
     if (window._leafletMap) {
         window._leafletMap.remove();
         window._leafletMap = null;
     }
+    
 
     if (stats.cacheCoords && stats.cacheCoords.length > 0 && stats.cacheCoords[0]) {
+        console.log("[DEBUG] Creating new map instance");
+
         // Center map on the first cache, or use a default
         const center = stats.cacheCoords[0];
         const map = L.map('map').setView(center, 8);
@@ -949,6 +1064,7 @@ function displayResults(stats) {
         const foundCountries = new Set();
         const foundRegions = new Set();
 
+        const markerCluster = L.markerClusterGroup();
         stats.cacheList.forEach(cache => {
             const greenGlobeIcon = L.AwesomeMarkers.icon({
                 icon: 'globe',
@@ -979,20 +1095,15 @@ function displayResults(stats) {
                 </div>
             `;
 
-            L.marker([cache.lat, cache.lon], {icon: greenGlobeIcon})
-                .addTo(map)
+            const marker = L.marker([cache.lat, cache.lon], {icon: greenGlobeIcon})
                 .bindPopup(popupHtml);
+            markerCluster.addLayer(marker);
         });
-
-        /*
-        stats.cacheCoords.forEach(([lat, lon]) => {
-            L.marker([lat, lon], {icon: greenGlobeIcon}).addTo(map);
-        });
-        */
+        map.addLayer(markerCluster);
 
         // Fit map to markers
         const bounds = L.latLngBounds(stats.cacheCoords);
-        map.fitBounds(bounds, {padding: [20, 20]});
+        map.fitBounds(bounds, {padding: [20, 20], animate: false});
 
         function addResetViewButton(map) {
             const controlContainer = map.zoomControl._container;
@@ -1017,18 +1128,144 @@ function displayResults(stats) {
         fetch('https://raw.githubusercontent.com/datasets/geo-countries/master/data/countries.geojson')
             .then(response => response.json())
             .then(countriesGeoJson => {
-                L.geoJSON(countriesGeoJson, {
-                    style: feature => {
-                        const countryName = feature.properties.ADMIN || feature.properties.NAME || "";
+                // Only add to the current map instance
+                if (window._leafletMap === map) {
+                    L.geoJSON(countriesGeoJson, {
+                        style: feature => {
+                            const countryName = feature.properties.ADMIN || feature.properties.NAME || "";
                         return foundCountries.has(countryName)
                             ? { color: '#e53935', weight: 2, fillOpacity: 0.2 }
                             : { color: '#888', weight: 0.5, fillOpacity: 0 };
                     }
                 }).addTo(map);
-            });
+            }
+        });
 
+        map.whenReady(() => {
+            // Only process if this is the latest request
+            if (requestId === filterRequestId) {
+                setupFilterListeners();
+            } else {
+                updateFilteredResults();
+            }
+        });
+    }
+    else {
         setupFilterListeners();
     }
+}
+function generateCountriesGrid(countries, total) {
+    // Helper to get flag emoji from country name
+    function getFlagEmojiFromCountryName(name) {
+        // Use your existing logic or fallback to emoji
+        // For demo: return "" (or use an image if you have a flag set)
+        return "";
+    }
+    // If you have flag images, use e.g. `/images/country_flags2/png/fi.png`
+    function getFlagImgSrc(name) {
+        // Map country name to ISO code, then to image path
+        // For demo: return ""
+        return "";
+    }
+    const entries = Object.entries(countries)
+        .sort((a, b) => b[1] - a[1]); // Sort by count desc
+
+    let html = `<div class="countries-grid">`;
+    entries.forEach(([name, count]) => {
+        const percent = total ? Math.round((count / total) * 100) : 0;
+        const flag = getFlagEmojiFromCountryName(name);
+        // Or use image: <img src="${getFlagImgSrc(name)}" alt="" />
+        html += `<div class="country-cell">
+            ${flag ? `<span>${flag}</span>` : ""}
+            <span class="country-name">${name}</span>
+            <span class="country-count">${count}</span>
+            <span class="country-percent">(${percent}%)</span>
+        </div>`;
+    });
+    html += `</div>`;
+    return html;
+}
+
+function generateCountriesCloud(countries, total) {
+    // Complete ISO country code list
+    const ISO_COUNTRIES = [
+        "AW","AF","AO","AI","AX","AL","AD","AE","AR","AM","AS","AQ","TF","AG","AU","AT","AZ","BI","BE",
+        "BJ","BQ","BF","BD","BG","BH","BS","BA","BL","BY","BZ","BM","BO","BR","BB","BN","BT","BV","BW",
+        "CF","CA","CC","CH","CL","CN","CI","CM","CD","CG","CK","CO","KM","CV","CR","CU","CW","CX","KY",
+        "CY","CZ","DE","DJ","DM","DK","DO","DZ","EC","EG","ER","EH","ES","EE","ET","FI","FJ","FK","FR",
+        "FO","FM","GA","GB","GE","GG","GH","GI","GN","GP","GM","GW","GQ","GR","GD","GL","GT","GF","GU",
+        "GY","HK","HM","HN","HR","HT","HU","ID","IM","IN","IO","IE","IR","IQ","IS","IL","IT","JM","JE",
+        "JO","JP","KZ","KE","KG","KH","KI","KN","KR","KW","LA","LB","LR","LY","LC","LI","LK","LS","LT",
+        "LU","LV","MO","MF","MA","MC","MD","MG","MV","MX","MH","MK","ML","MT","MM","ME","MN","MP","MZ",
+        "MR","MS","MQ","MU","MW","MY","YT","NA","NC","NE","NG","NI","NU","NL","NO","NP","NR","NZ","OM",
+        "PK","PA","PN","PE","PH","PW","PG","PL","PR","KP","PT","PY","PS","PF","QA","RE","RO","RU","RW",
+        "SA","SD","SN","SG","GS","SH","SJ","SB","SL","SV","SM","SO","PM","RS","SS","ST","SR","SK","SI",
+        "SE","SZ","SX","SC","SY","TC","TD","TG","TH","TJ","TK","TM","TL","TO","TT","TN","TR","TV","TW",
+        "TZ","UG","UA","UM","UY","US","UZ","VA","VC","VE","VG","VI","VN","VU","WF","WS","YE","ZA","ZM",
+        "ZW"
+    ];
+
+    // Helper: Convert country name to ISO code using Intl.DisplayNames
+    function countryNameToCode(name) {
+        if (!name || typeof name !== "string") return null;
+        try {
+            const regionNames = new Intl.DisplayNames(["en"], { type: "region" });
+            const target = name.trim().toLowerCase();
+            for (let code of ISO_COUNTRIES) {
+                const displayName = regionNames.of(code);
+                if (displayName && displayName.toLowerCase() === target) {
+                    return code;
+                }
+            }
+        } catch (e) {
+            // Fallback: complete mapping from country name to ISO code
+            const simpleMap = {
+                "Aruba": "AW", "Afghanistan": "AF", "Angola": "AO", "Anguilla": "AI", "Åland Islands": "AX", "Albania": "AL", "Andorra": "AD", "United Arab Emirates": "AE", "Argentina": "AR", "Armenia": "AM", "American Samoa": "AS", "Antarctica": "AQ", "French Southern Territories": "TF", "Antigua and Barbuda": "AG", "Australia": "AU", "Austria": "AT", "Azerbaijan": "AZ", "Burundi": "BI", "Belgium": "BE", "Benin": "BJ", "Bonaire, Sint Eustatius and Saba": "BQ", "Burkina Faso": "BF", "Bangladesh": "BD", "Bulgaria": "BG", "Bahrain": "BH", "Bahamas": "BS", "Bosnia and Herzegovina": "BA", "Saint Barthélemy": "BL", "Belarus": "BY", "Belize": "BZ", "Bermuda": "BM", "Bolivia": "BO", "Brazil": "BR", "Barbados": "BB", "Brunei Darussalam": "BN", "Bhutan": "BT", "Bouvet Island": "BV", "Botswana": "BW", "Central African Republic": "CF", "Canada": "CA", "Cocos (Keeling) Islands": "CC", "Switzerland": "CH", "Chile": "CL", "China": "CN", "Côte d'Ivoire": "CI", "Cameroon": "CM", "Congo (Kinshasa)": "CD", "Congo (Brazzaville)": "CG", "Cook Islands": "CK", "Colombia": "CO", "Comoros": "KM", "Cabo Verde": "CV", "Costa Rica": "CR", "Cuba": "CU", "Curaçao": "CW", "Christmas Island": "CX", "Cayman Islands": "KY", "Cyprus": "CY", "Czechia": "CZ", "Germany": "DE", "Djibouti": "DJ", "Dominica": "DM", "Denmark": "DK", "Dominican Republic": "DO", "Algeria": "DZ", "Ecuador": "EC", "Egypt": "EG", "Eritrea": "ER", "Western Sahara": "EH", "Spain": "ES", "Estonia": "EE", "Ethiopia": "ET", "Finland": "FI", "Fiji": "FJ", "Falkland Islands": "FK", "France": "FR", "Faroe Islands": "FO", "Micronesia": "FM", "Gabon": "GA", "United Kingdom": "GB", "Georgia": "GE", "Guernsey": "GG", "Ghana": "GH", "Gibraltar": "GI", "Guinea": "GN", "Guadeloupe": "GP", "Gambia": "GM", "Guinea-Bissau": "GW", "Equatorial Guinea": "GQ", "Greece": "GR", "Grenada": "GD", "Greenland": "GL", "Guatemala": "GT", "French Guiana": "GF", "Guam": "GU", "Guyana": "GY", "Hong Kong": "HK", "Heard Island and McDonald Islands": "HM", "Honduras": "HN", "Croatia": "HR", "Haiti": "HT", "Hungary": "HU", "Indonesia": "ID", "Isle of Man": "IM", "India": "IN", "British Indian Ocean Territory": "IO", "Ireland": "IE", "Iran": "IR", "Iraq": "IQ", "Iceland": "IS", "Israel": "IL", "Italy": "IT", "Jamaica": "JM", "Jersey": "JE", "Jordan": "JO", "Japan": "JP", "Kazakhstan": "KZ", "Kenya": "KE", "Kyrgyzstan": "KG", "Cambodia": "KH", "Kiribati": "KI", "Saint Kitts and Nevis": "KN", "South Korea": "KR", "Kuwait": "KW", "Laos": "LA", "Lebanon": "LB", "Liberia": "LR", "Libya": "LY", "Saint Lucia": "LC", "Liechtenstein": "LI", "Sri Lanka": "LK", "Lesotho": "LS", "Lithuania": "LT", "Luxembourg": "LU", "Latvia": "LV", "Macao": "MO", "Saint Martin": "MF", "Morocco": "MA", "Monaco": "MC", "Moldova": "MD", "Madagascar": "MG", "Maldives": "MV", "Mexico": "MX", "Marshall Islands": "MH", "North Macedonia": "MK", "Mali": "ML", "Malta": "MT", "Myanmar": "MM", "Montenegro": "ME", "Mongolia": "MN", "Northern Mariana Islands": "MP", "Mozambique": "MZ", "Mauritania": "MR", "Montserrat": "MS", "Martinique": "MQ", "Mauritius": "MU", "Malawi": "MW", "Malaysia": "MY", "Mayotte": "YT", "Namibia": "NA", "New Caledonia": "NC", "Niger": "NE", "Nigeria": "NG", "Nicaragua": "NI", "Niue": "NU", "Netherlands": "NL", "Norway": "NO", "Nepal": "NP", "Nauru": "NR", "New Zealand": "NZ", "Oman": "OM", "Pakistan": "PK", "Panama": "PA", "Pitcairn": "PN", "Peru": "PE", "Philippines": "PH", "Palau": "PW", "Papua New Guinea": "PG", "Poland": "PL", "Puerto Rico": "PR", "North Korea": "KP", "Portugal": "PT", "Paraguay": "PY", "Palestine": "PS", "French Polynesia": "PF", "Qatar": "QA", "Réunion": "RE", "Romania": "RO", "Russia": "RU", "Rwanda": "RW", "Saudi Arabia": "SA", "Sudan": "SD", "Senegal": "SN", "Singapore": "SG", "South Georgia and the South Sandwich Islands": "GS", "Saint Helena": "SH", "Svalbard and Jan Mayen": "SJ", "Solomon Islands": "SB", "Sierra Leone": "SL", "El Salvador": "SV", "San Marino": "SM", "Somalia": "SO", "Saint Pierre and Miquelon": "PM", "Serbia": "RS", "South Sudan": "SS", "Sao Tome and Principe": "ST", "Suriname": "SR", "Slovakia": "SK", "Slovenia": "SI", "Sweden": "SE", "Eswatini": "SZ", "Sint Maarten": "SX", "Seychelles": "SC", "Syria": "SY", "Turks and Caicos Islands": "TC", "Chad": "TD", "Togo": "TG", "Thailand": "TH", "Tajikistan": "TJ", "Tokelau": "TK", "Turkmenistan": "TM", "Timor-Leste": "TL", "Tonga": "TO", "Trinidad and Tobago": "TT", "Tunisia": "TN", "Turkey": "TR", "Tuvalu": "TV", "Taiwan": "TW", "Tanzania": "TZ", "Uganda": "UG", "Ukraine": "UA", "United States Minor Outlying Islands": "UM", "Uruguay": "UY", "United States": "US", "Uzbekistan": "UZ", "Holy See": "VA", "Saint Vincent and the Grenadines": "VC", "Venezuela": "VE", "British Virgin Islands": "VG", "U.S. Virgin Islands": "VI", "Vietnam": "VN", "Vanuatu": "VU", "Wallis and Futuna": "WF", "Samoa": "WS", "Yemen": "YE", "South Africa": "ZA", "Zambia": "ZM", "Zimbabwe": "ZW"
+            };
+            return simpleMap[name.trim()] || null;
+        }
+        return null;
+    }
+    // Helper: Convert ISO code to flag emoji
+    function getFlagEmojiFromCountryCode(code) {
+        if (!code || code.length !== 2) return "";
+        return code.toUpperCase().replace(/./g, c =>
+            String.fromCodePoint(0x1F1E6 + c.charCodeAt(0) - 65)
+        );
+    }
+    // Helper: Get flag emoji from country name
+    function getFlagEmojiFromCountryName(name) {
+        const code = countryNameToCode(name);
+        return getFlagEmojiFromCountryCode(code);
+    }
+
+    const entries = Object.entries(countries)
+        .sort((a, b) => b[1] - a[1]); // Sort by count desc
+
+    let html = `<div class="countries-cloud">`;
+    entries.forEach(([name, count]) => {
+        const percent = total ? Math.round((count / total) * 100) : 0;
+        const flag = getFlagEmojiFromCountryName(name);
+        html += `<span class="country-tag">
+            ${flag ? `<span>${flag}</span>` : ""}
+            <span class="country-name">${name}</span>
+            <span class="country-count">${count}</span>
+            <span class="country-percent">(${percent}%)</span>
+        </span>`;
+    });
+    html += `</div>`;
+    return html;
+}
+
+function generateRegionsCloud(regions, total) {
+    const entries = Object.entries(regions)
+        .sort((a, b) => b[1] - a[1]);
+    let html = `<div class="regions-cloud">`;
+    entries.forEach(([name, count]) => {
+        html += `<span class="region-tag">${name}<span class="region-count">${count}</span></span>`;
+    });
+    html += `</div>`;
+    return html;
 }
 
 
@@ -1611,9 +1848,11 @@ function setupFilterListeners() {
 }
 
 function updateFilteredResults() {
+    filterRequestId++;
+    const currentId = filterRequestId;
     const filteredCacheList = getFilteredCacheList(window._fullCacheList, selectedCountries, selectedRegions);
     const stats = computeStatsFromCacheList(filteredCacheList);
-    displayResults(stats);
+    displayResults(stats, currentId);
 }
 
 document.getElementById("fileInput").addEventListener("change", function(event) {
