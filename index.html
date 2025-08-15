@@ -173,6 +173,19 @@ SOFTWARE.
             font-weight: normal;
             margin-left: 2px;
         }
+        #countryFilterList, #regionFilterList {
+            border: 2px solid #1976d2;
+            border-radius: 6px;
+            background: #f0f6ff;
+            padding: 8px;
+            margin-top: 4px;
+            margin-bottom: 8px;
+        }
+        .zero-cell {
+            background: #f3f3f3;
+            color: #bbb;
+            font-weight: normal;
+        }
     </style>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -526,7 +539,36 @@ SOFTWARE.
         let lastMapInstance = null;
         let lastMapRequestId = 0;
 
-        
+        let _countriesGeoJson = null;
+
+        // Mapping of country names  from geojson to the gpx (geocaching) country names for normalization
+        const GEOJSON_TO_GPX_COUNTRY_MAP = {
+            "United States of America": "United States",
+            "Turkey": "Türkiye",
+            "Republic of Serbia": "Serbia",
+            "Aland": "Åland Islands",
+            // Add more as needed
+        };
+
+
+// fetch the geojson data for countries when the page loads 
+window.addEventListener('DOMContentLoaded', () => {
+    console.log("[DEBUG] Fetching countries GeoJSON...");
+    fetch('https://raw.githubusercontent.com/datasets/geo-countries/master/data/countries.geojson')
+        .then(response => response.json())
+        .then(data => {
+            _countriesGeoJson = data;
+            const count = Array.isArray(data.features) ? data.features.length : 0;
+            console.log(`[DEBUG] Countries GeoJSON loaded. Number of countries: ${count}`);
+            if (count > 0) {
+                console.log("[DEBUG] Example country:", _countriesGeoJson.features[0].properties.name);
+            }
+        })
+        .catch(err => {
+            console.error("Failed to fetch countries GeoJSON:", err);
+        });
+});
+
 
 function parseGPX(file) {
     const parser = new DOMParser();
@@ -686,7 +728,7 @@ function parseGPX(file) {
          // 🌍 Haetaan korkeusarvot kaikille pisteille yhdellä kutsulla
         let elevations = [];
         if (latList.length > 0) {
-            elevations = await fetchElevationsInChunks(latList, lonList, 70); // voit säätää 50 tarvittaessa
+            elevations = await fetchElevationsInChunks(latList, lonList, 100); // allowed max 100 per query
         }
         cacheList.forEach((cache, i) => {
             cache.elevation = elevations[i] ?? null;
@@ -1124,22 +1166,43 @@ function displayResults(stats, requestId) {
         addResetViewButton(map);
 
 
-        // 2. Highlight countries
-        fetch('https://raw.githubusercontent.com/datasets/geo-countries/master/data/countries.geojson')
-            .then(response => response.json())
-            .then(countriesGeoJson => {
-                // Only add to the current map instance
-                if (window._leafletMap === map) {
-                    L.geoJSON(countriesGeoJson, {
-                        style: feature => {
-                            const countryName = feature.properties.ADMIN || feature.properties.NAME || "";
-                        return foundCountries.has(countryName)
-                            ? { color: '#e53935', weight: 2, fillOpacity: 0.2 }
-                            : { color: '#888', weight: 0.5, fillOpacity: 0 };
-                    }
-                }).addTo(map);
+    // 2. Highlight countries
+    if( _countriesGeoJson ) {
+        if (window._leafletMap === map) {
+            // Helper: normalize country names for comparison
+            function normalize(name) {
+                return (name || "").trim();
             }
-        });
+            // Build normalized set for foundCountries
+            const foundCountriesNorm = new Set(Array.from(foundCountries).map(normalize));
+            const geoJsonCountryNames = new Set(
+                _countriesGeoJson.features.map(f => GEOJSON_TO_GPX_COUNTRY_MAP[normalize(f.properties.name) ] || normalize(f.properties.name))
+            );
+
+            // Find countries in foundCountries that do not match any GeoJSON country
+            const unmatchedCountries = Array.from(foundCountries).filter(c => 
+                !geoJsonCountryNames.has(normalize(c))
+            );
+            if (unmatchedCountries.length > 0) {
+                console.warn("[WARN] The following countries were not matched in GeoJSON and will NOT be highlighted:", unmatchedCountries);
+            }
+
+            L.geoJSON(_countriesGeoJson, {
+                style: feature => {
+                    const countryName = normalize(feature.properties.name) || "";
+                    const gpxName = GEOJSON_TO_GPX_COUNTRY_MAP[countryName] || countryName;
+                    const isHighlighted = foundCountriesNorm.has(gpxName);
+                    // Debug: log matched countries
+                    if (isHighlighted) {
+                        console.debug("Highlighting country:", gpxName);
+                    }
+                    return isHighlighted
+                        ? { color: '#e53935', weight: 2, fillOpacity: 0.2 }
+                        : { color: '#888', weight: 0.5, fillOpacity: 0 };
+                }
+            }).addTo(map);
+        }
+    }
 
         map.whenReady(() => {
             // Only process if this is the latest request
@@ -1297,7 +1360,10 @@ function generateRegionsCloud(regions, total) {
                 <use href="#${iconId}"></use>
             </svg>${key}`;
         }
-        return `<tr><td>${displayKey}</td><td>${value}</td></tr>`;
+        //return `<tr><td>${displayKey}</td><td>${value}</td></tr>`;
+        const zeroClass = value === 0 ? 'zero-cell' : '';
+        return `<tr><td class="${zeroClass}">${displayKey}</td><td class="${zeroClass}">${value}</td></tr>`;
+
     }).join("");    return `<table><tr><th>${col1}</th><th>${col2}</th></tr>${rows}</table>`;
 }
 
@@ -1321,7 +1387,11 @@ function generateMonthTable(data, col1, col2) {
     }
     
     entries.sort((a, b) => new Date(Date.parse(a[0] +" 1, 2000")) - new Date(Date.parse(b[0] +" 1, 2000")));
-    const rows = entries.map(([key, value]) => `<tr><td>${key}</td><td>${value}</td></tr>`).join("");
+    //const rows = entries.map(([key, value]) => `<tr><td>${key}</td><td>${value}</td></tr>`).join("");
+    const rows = entries.map(([key, value]) => {
+        const zeroClass = value === 0 ? 'zero-cell' : '';
+        return `<tr><td class="${zeroClass}">${key}</td><td class="${zeroClass}">${value}</td></tr>`;
+    }).join("");
     return `<table><tr><th>${col1}</th><th>${col2}</th></tr>${rows}</table>`;
 }
 
@@ -1338,7 +1408,9 @@ function generateWeekdayTable(data, col1, col2) {
             return ''; // Skip this row
         }
         
-        return `<tr><td>${name}</td><td>${value}</td></tr>`;
+        //return `<tr><td>${name}</td><td>${value}</td></tr>`;
+        const zeroClass = value === 0 ? 'zero-cell' : '';
+        return `<tr><td class="${zeroClass}">${name}</td><td class="${zeroClass}">${value}</td></tr>`;
     }).filter(row => row !== '').join("");
     
     return `<table><tr><th>${col1}</th><th>${col2}</th></tr>${rows}</table>`;
@@ -1868,6 +1940,7 @@ document.querySelectorAll('input[name="displayFilter"]').forEach(radio => {
         updateFilteredResults();
     });
 });
+
 
 </script>
 </body>
