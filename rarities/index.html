@@ -32,6 +32,12 @@ SOFTWARE.
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/jquery.dataTables.min.css" />
+    
+    <!-- Add Leaflet.markercluster CSS/JS to <head> -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
+    <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+
     <style>
         #map {
             height: 50vh;
@@ -102,7 +108,7 @@ SOFTWARE.
     <label><input type="checkbox" id="showCounty" checked> Kunta</label>
     <br>
     <label><input type="checkbox" id="showAll"> Näytä kaikki kätköt</label>
-    <label><input type="checkbox" id="showHeatmap"> Näytä lämpökartta</label>
+    <!-- <label><input type="checkbox" id="showHeatmap"> Näytä lämpökartta</label> -->
     <div id="map"></div>
     <button onclick="exportSelectedToGPX()">Lataa GPX-valitut</button>
     <div id="results"></div>
@@ -694,99 +700,72 @@ SOFTWARE.
         // Otherwise, show markers for each cache with detailed info in popups
         // allRows: array of all cache data, selectedRows: array of selected cache data
         function visualizeMap(allRows, selectedRows) {
-            // Remove previous map instance if exists
             if (map) map.remove();
 
-            // Initialize Leaflet map
             map = L.map('map');
             L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
                 attribution: '&copy; OpenStreetMap contributors'
             }).addTo(map);
 
-            // Check which caches to show: all or only selected
-            const showHeatmap = document.getElementById("showHeatmap").checked;
-            const rowsToShow = selectedRows; // Kartta näyttää aina taulukon filtteröidyn datan
-
-            // Create bounds object to fit all markers/heat points
+            // Always show all waypoints using markerClusterGroup
+            const rowsToShow = selectedRows;
             const bounds = L.latLngBounds([]);
+            const markers = L.markerClusterGroup();
 
-            if (showHeatmap) {
-                // Prepare heatmap points: [lat, lon, intensity]
-                const heatPoints = rowsToShow.map(r => [r.Latitude_dd, r.Longitude_dd, 0.6]).filter(p => p[0] && p[1]);
-                // Add heat layer to map
-                if (heatPoints.length > 0) {
-                    L.heatLayer(heatPoints, { radius: 25, blur: 15, maxZoom: 10 }).addTo(map);
-                    // Extend bounds for each heat point
-                    heatPoints.forEach(p => bounds.extend([p[0], p[1]]));
+            rowsToShow.forEach(row => {
+                if (!row.Latitude_dd || !row.Longitude_dd) return;
+                let markerOptions = {};
+                if (row.Reasons && row.Reasons.length > 0) {
+                    markerOptions = {
+                        icon: L.icon({
+                            iconUrl: "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-green.png",
+                            shadowUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png",
+                            iconSize: [25, 41],
+                            iconAnchor: [12, 41],
+                            popupAnchor: [1, -34],
+                            shadowSize: [41, 41]
+                        })
+                    };
                 }
-            } else {
-                // Add a marker for each cache
-                rowsToShow.forEach(row => {
-                    if (!row.Latitude_dd || !row.Longitude_dd) return; // Skip if coordinates missing
+                const popupHtml = `
+                    <div style="width: 260px;">
+                        <b>Cache info:</b><br>
+                        <b>ID:</b> ${row.ID} ${selectedIDs.has(row.ID) ? "🎯" : ""}<br>
+                        <b>Cache name:</b> ${row["Cache name"]}<br>
+                        <b>Country:</b> ${row.Country || ""}<br>
+                        <b>Region:</b> ${row.Region || ""}<br>
+                        <b>Difficulty:</b> ${row.Difficulty}<br>
+                        <b>Terrain:</b> ${row.Terrain}<br>
+                        <b>Favorite points:</b> ${row.FP}<br>
+                        <b>Hidden:</b> ${row.Hidden ? row.Hidden.toISOString().slice(0, 10) : ""}<br>
+                        <b>Latitude:</b> ${row.Latitude_dd}<br>
+                        <b>Longitude:</b> ${row.Longitude_dd}<br>
+                        <b>Elevation:</b> ${row["Elevation (m)"]}<br>
+                        <b>Size:</b> ${row.Size}<br>
+                        <b>Type:</b> ${row.Type}<br>
+                        <b>Criteria:</b> ${row.Reasons.length > 0 ? row.Reasons.join(", ") : "-"}
+                    </div>
+                `;
+                const marker = L.marker([row.Latitude_dd, row.Longitude_dd], markerOptions).bindPopup(popupHtml);
+                markers.addLayer(marker);
+                bounds.extend([row.Latitude_dd, row.Longitude_dd]);
+            });
 
-                    // Default marker options // Use green icon if cache has any criteria, otherwise default icon
-                    let markerOptions = {};
-                    if (row.Reasons && row.Reasons.length > 0) {
-                        // Use a green Leaflet marker (custom color)
-                        markerOptions = {
-                            icon: L.icon({
-                                iconUrl: "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-green.png",
-                                shadowUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png",
-                                iconSize: [25, 41],
-                                iconAnchor: [12, 41],
-                                popupAnchor: [1, -34],
-                                shadowSize: [41, 41]
-                            })
-                        };
-                    }
+            map.addLayer(markers);
 
-                    // Build detailed popup HTML for cache info
-                    const popupHtml = `
-                <div style="width: 260px;">
-                    <b>Cache info:</b><br>
-                    <b>ID:</b> ${row.ID} ${selectedIDs.has(row.ID) ? "🎯" : ""}<br>
-                    <b>Cache name:</b> ${row["Cache name"]}<br>
-                    <b>Country:</b> ${row.Country || ""}<br>
-                    <b>Region:</b> ${row.Region || ""}<br>
-                    <b>Difficulty:</b> ${row.Difficulty}<br>
-                    <b>Terrain:</b> ${row.Terrain}<br>
-                    <b>Favorite points:</b> ${row.FP}<br>
-                    <b>Hidden:</b> ${row.Hidden ? row.Hidden.toISOString().slice(0, 10) : ""}<br>
-                    <b>Latitude:</b> ${row.Latitude_dd}<br>
-                    <b>Longitude:</b> ${row.Longitude_dd}<br>
-                    <b>Elevation:</b> ${row["Elevation (m)"]}<br>
-                    <b>Size:</b> ${row.Size}<br>
-                    <b>Type:</b> ${row.Type}<br>
-                    <b>Criteria:</b> ${row.Reasons.length > 0 ? row.Reasons.join(", ") : "-"}
-                </div>
-            `;
-                    // Add marker to map and bind popup
-                    L.marker([row.Latitude_dd, row.Longitude_dd], markerOptions)
-                        .addTo(map)
-                        .bindPopup(popupHtml);
-                    // Extend bounds to include this marker
-                    bounds.extend([row.Latitude_dd, row.Longitude_dd]);
-                });
-            }
-
-            // Fit map view to all markers/heat points
             if (bounds.isValid()) {
                 map.fitBounds(bounds);
             } else if (allRows.length > 0) {
-                 // Jos filtteröityjä rivejä ei ole, mutta dataa on, keskitä kaikkiin
                 const allBounds = L.latLngBounds(allRows.map(r => [r.Latitude_dd, r.Longitude_dd]).filter(c => c[0] && c[1]));
                 if(allBounds.isValid()) map.fitBounds(allBounds);
             }
 
-
             function addResetViewButton(map) {
                 const controlContainer = map.zoomControl._container;
-
                 const button = L.DomUtil.create('a', 'leaflet-control-zoom-reset', controlContainer);
-                button.innerHTML = '⤾'; // Vaihtoehtoisesti: '↺', '🔄', 'Reset'
+                button.innerHTML = '⤾';
                 button.href = '#';
                 button.title = 'Reset view';
-
                 L.DomEvent.on(button, 'click', function(e) {
                     L.DomEvent.preventDefault(e);
                     if (bounds.isValid()) {
@@ -794,10 +773,8 @@ SOFTWARE.
                     }
                 });
             }
-
             addResetViewButton(map);
         }
-
         // Generate ranges for numeric filtering
         // values: array of numeric values
         // maxRanges: maximum number of ranges to generate
