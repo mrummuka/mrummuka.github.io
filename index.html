@@ -75,6 +75,27 @@ SOFTWARE.
             max-width: 22px;
             width: 18px;
         }
+        #map {
+            height: 500px;
+            transition: all 0.3s ease; /* Smooth transition for size changes */
+        }
+        #map.fullscreen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: 1000; /* Ensure map is above other content */
+        }
+        /* Style for custom Leaflet control to match zoom buttons */
+        .leaflet-control-fullscreen a {
+            background: #fff url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>') no-repeat center;
+            background-size: 18px 18px;
+        }
+        .leaflet-control-fullscreen.leaflet-control-minimize a {
+            background: #fff url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24"><path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"/></svg>') no-repeat center;
+            background-size: 18px 18px;
+        }
         .leaflet-control-zoom-reset {
             font-size: 18px;
             line-height: 26px;
@@ -186,6 +207,7 @@ SOFTWARE.
             color: #bbb;
             font-weight: normal;
         }
+
     </style>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -200,6 +222,11 @@ SOFTWARE.
     <!-- Leaflet.awesome-markers CSS & JS -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet.awesome-markers@2.0.5/dist/leaflet.awesome-markers.css">
     <script src="https://cdn.jsdelivr.net/npm/leaflet.awesome-markers@2.0.5/dist/leaflet.awesome-markers.js"></script>
+
+    <!-- leaflet plugin for graticules -->
+    <script src="L.Graticule.js"></script>
+
+
 
 </head>
 
@@ -399,6 +426,19 @@ SOFTWARE.
         <label>
             <input type="radio" name="displayFilter" value="gpx"> Only values found in GPX
         </label>
+        <label>
+            <input type="checkbox" id="highlightCountries"> Highlight countries<br>
+        </label>
+        <label>
+            <input type="checkbox" id="toggle-graticule"> Show graticules</label>
+        <label>
+            <input type="checkbox" id="toggle-found-graticules"> Highlight found graticules
+        </label>
+        <label>
+            <input type="checkbox" id="toggle-missing-graticules"> Highlight missing graticules
+        </label>
+
+
     </div>
     <input type="file" id="fileInput" accept=".gpx" />
     <div id="results"></div>
@@ -956,14 +996,14 @@ function displayResults(stats, requestId) {
         <h2>Analysis Results</h2>
         <!-- Add after <h2>Analysis Results</h2> -->
         <div class="flex-row" style="margin-bottom:1em;">
-<div>
-    <label for="countryFilterList"><b>Filter by Country:</b></label><br>
-    <div id="countryFilterList" class="filter-list"></div>
-</div>
-<div>
-    <label for="regionFilterList"><b>Filter by Region:</b></label><br>
-    <div id="regionFilterList" class="filter-list"></div>
-</div>
+        <div>
+            <label for="countryFilterList"><b>Filter by Country:</b></label><br>
+            <div id="countryFilterList" class="filter-list"></div>
+        </div>
+        <div>
+            <label for="regionFilterList"><b>Filter by Region:</b></label><br>
+            <div id="regionFilterList" class="filter-list"></div>
+        </div>
         </div>
         <div class="flex-row">
             <div>
@@ -1091,9 +1131,109 @@ function displayResults(stats, requestId) {
         const map = L.map('map').setView(center, 8);
         window._leafletMap = map; // Prevent duplicate maps
 
+
+
+        // Preprocess cachePoints to get unique graticules
+        const uniqueGraticules = getUniqueGraticules(stats.cacheCoords, map);
+
+
+
+        function toggleFoundGraticules(show) {
+            if (show) {
+                foundLayer = highlightFoundGraticules(uniqueGraticules, map).addTo(map);
+            } else {
+                if (foundLayer) map.removeLayer(foundLayer);
+            }
+        }
+
+        document.getElementById("toggle-found-graticules").addEventListener("change", e => {
+            toggleFoundGraticules(e.target.checked);
+        });
+
+        function toggleMissingGraticules(show) {
+            if (show) {
+                console.debug("Showing missing graticules");
+                missingLayer = highlightMissingGraticules(stats.cacheCoords, map).addTo(map);
+            } else {
+                if (missingLayer) map.removeLayer(missingLayer);
+            }
+        }
+
+        document.getElementById("toggle-missing-graticules").addEventListener("change", e => {
+            toggleMissingGraticules(e.target.checked);
+        });
+
+
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             attribution: '&copy; OpenStreetMap contributors'
         }).addTo(map);
+
+
+        // Custom Leaflet control for full-screen toggle
+        L.Control.Fullscreen = L.Control.extend({
+            options: {
+                position: 'topright' // Align with zoom controls
+            },
+            onAdd: function(map) {
+                const container = L.DomUtil.create('div', 'leaflet-control-fullscreen leaflet-bar leaflet-control');
+                const link = L.DomUtil.create('a', 'leaflet-bar-part', container);
+                link.href = '#';
+                link.title = 'Toggle full-screen';
+                L.DomEvent.on(link, 'click', L.DomEvent.stopPropagation)
+                    .on(link, 'click', L.DomEvent.preventDefault)
+                    .on(link, 'click', this._toggleFullscreen, this);
+                return container;
+            },
+            _toggleFullscreen: function() {
+                const mapContainer = document.getElementById('map');
+                const isFullscreen = mapContainer.classList.contains('fullscreen');
+                if (isFullscreen) {
+                    mapContainer.classList.remove('fullscreen');
+                    mapContainer.style.height = '500px';
+                    L.DomUtil.removeClass(this._container, 'leaflet-control-minimize');
+                    // Restore scroll position
+                    if (this._scrollY !== undefined) {
+                        window.scrollTo(0, this._scrollY);
+                    }
+                } else {
+                    // Store current scroll position
+                    this._scrollY = window.scrollY;
+                    mapContainer.classList.add('fullscreen');
+                    mapContainer.style.height = '100vh';
+                    L.DomUtil.addClass(this._container, 'leaflet-control-minimize');
+                    // Scroll to map's top-left corner
+                    const mapRect = mapContainer.getBoundingClientRect();
+                    window.scrollTo({
+                        top: mapRect.top + window.scrollY,
+                        left: mapRect.left + window.scrollX,
+                        behavior: 'smooth'
+                    });
+                }
+                // Delay invalidateSize to ensure transition completes
+                setTimeout(() => {
+                    map.invalidateSize();
+                    // Force layer redraw
+                    if (window.markerLayer && map.hasLayer(window.markerLayer)) {
+                        map.removeLayer(window.markerLayer);
+                        map.addLayer(window.markerLayer);
+                    }
+                    if (window.graticuleLayer && map.hasLayer(window.graticuleLayer)) {
+                        map.removeLayer(window.graticuleLayer);
+                        map.addLayer(window.graticuleLayer);
+                    }
+                    if (window.countryLayer && map.hasLayer(window.countryLayer)) {
+                        map.removeLayer(window.countryLayer);
+                        map.addLayer(window.countryLayer);
+                    }
+                }, 300); // Match CSS transition duration
+            }
+        });
+        L.control.fullscreen = function(opts) {
+            return new L.Control.Fullscreen(opts);
+        };
+        L.control.fullscreen().addTo(map);
+
+
 
          // Create a green awesome marker with globe icon
         const greenGlobeIcon = L.AwesomeMarkers.icon({
@@ -1165,8 +1305,72 @@ function displayResults(stats, requestId) {
 
         addResetViewButton(map);
 
+        let foundLayer = null;
+        let missingLayer = null;
+        let countryLayer = null;
 
-    // 2. Highlight countries
+        // 2. Highlight countries
+        countryLayer = highlightCountries(foundCountries, map);
+        if( countryLayer && document.getElementById("highlightCountries").checked ) {
+            map.addLayer(countryLayer);
+        }
+        console.log("YES IM HERE")
+
+
+        // add country toggle listener
+        document.getElementById("highlightCountries").addEventListener("change", function(e) {
+            if (e.target.checked) {
+                console.debug("Highlighting countries");
+                if(countryLayer) map.removeLayer(countryLayer);
+                countryLayer.addTo(map);
+            } else {
+                if(countryLayer) map.removeLayer(countryLayer);
+            }
+        });
+
+        const graticule = L.graticule({
+            interval: 1,
+            style: {
+                color: "#A0A0A0",
+                weight: 1,
+                opacity: 0.8
+            }
+        });
+
+        function toggleGraticuleLayer(show) {
+            if (show) {
+                console.debug("Showing graticule");
+                graticule.addTo(map);
+            } else {
+                console.debug("Hiding graticule");
+                map.removeLayer(graticule);
+            }
+        }
+
+        toggleGraticuleLayer(document.getElementById("toggle-graticule").checked);
+        toggleFoundGraticules(document.getElementById("toggle-found-graticules").checked);
+        toggleMissingGraticules(document.getElementById("toggle-missing-graticules").checked);
+
+
+        document.getElementById("toggle-graticule").addEventListener("change", function(e) {
+            toggleGraticuleLayer(e.target.checked);
+        });
+
+        map.whenReady(() => {
+            // Only process if this is the latest request
+            if (requestId === filterRequestId) {
+                setupFilterListeners();
+            } else {
+                updateFilteredResults();
+            }
+        });
+    }
+    else {
+        setupFilterListeners();
+    }
+}
+
+function highlightCountries( foundCountries, map ) {
     if( _countriesGeoJson ) {
         if (window._leafletMap === map) {
             // Helper: normalize country names for comparison
@@ -1187,7 +1391,7 @@ function displayResults(stats, requestId) {
                 console.warn("[WARN] The following countries were not matched in GeoJSON and will NOT be highlighted:", unmatchedCountries);
             }
 
-            L.geoJSON(_countriesGeoJson, {
+            return L.geoJSON(_countriesGeoJson, {
                 style: feature => {
                     const countryName = normalize(feature.properties.name) || "";
                     const gpxName = GEOJSON_TO_GPX_COUNTRY_MAP[countryName] || countryName;
@@ -1200,23 +1404,167 @@ function displayResults(stats, requestId) {
                         ? { color: '#e53935', weight: 2, fillOpacity: 0.2 }
                         : { color: '#888', weight: 0.5, fillOpacity: 0 };
                 }
-            }).addTo(map);
+            })
+        }
+    }
+    else {
+        console.error("Countries GeoJSON not loaded");
+        return L.layerGroup([]);
+    }
+}
+
+function getMapBoundaries(map) {
+    let bounds = map.getBounds();
+    return {
+        minLat: Math.floor(bounds.getSouth()),
+        maxLat: Math.ceil(bounds.getNorth()),
+        minLon: Math.floor(bounds.getWest()),
+        maxLon: Math.ceil(bounds.getEast())
+    };
+}
+
+/*
+function highlightFoundGraticules(cachePoints, map) {
+    // Debug: Log input parameters
+    console.debug("highlightFoundGraticules called with:", {
+        cachePoints: cachePoints,
+        cachePointsLength: cachePoints ? cachePoints.length : 'undefined or null',
+        map: map,
+        hasGetBounds: map && typeof map.getBounds === 'function'
+    });
+
+     // Validate inputs
+    if (!map || typeof map.getBounds !== 'function') {
+        console.error("Invalid map object: getBounds is not a function");
+        return L.layerGroup([]);
+    }
+    if (!Array.isArray(cachePoints)) {
+        console.error("cachePoints is not an array or is undefined/null:", cachePoints);
+        return L.layerGroup([]);
+    }
+    if (cachePoints.length === 0) {
+        console.warn("cachePoints array is empty");
+        return L.layerGroup([]);
+    }
+
+    // Debug: Validate cachePoints structure
+    cachePoints.forEach((point, index) => {
+        if (!point || typeof point[0] !== 'number' || typeof point[1] !== 'number') {
+            console.warn(`Invalid cachePoint at index ${index}:`, point);
+        } else {
+            console.debug(`CachePoint ${index}: lat=${point[0]}, lon=${point[1]}`);
+        }
+    });
+
+    let overlays = [];
+    let { minLat, maxLat, minLon, maxLon } = getMapBoundaries(map);
+    console.debug("Adjusted boundaries:", { minLat, maxLat, minLon, maxLon });
+
+    // Debug: Log loop iterations
+    let iterationCount = 0;
+    for (let lat = minLat; lat < maxLat; lat++) {
+        for (let lon = minLon; lon < maxLon; lon++) {
+            iterationCount++;
+            console.debug(`Checking graticule: lat=${lat} to ${lat+1}, lon=${lon} to ${lon+1}`);
+
+            let found = cachePoints.some(p => {
+                let inBounds = p[0] >= lat && p[0] < lat + 1 && p[1] >= lon && p[1] < lon + 1;
+                console.debug(`  CachePoint check: lat=${p[0]}, lon=${p[1]}, inBounds=${inBounds}`);
+                return inBounds;
+            });            
+            if (found) {
+                console.debug(`Found cache in graticule: lat=${lat}, lon=${lon}`);
+                let poly = L.rectangle([[lat, lon],[lat+1, lon+1]], {
+                    color: "#0f0",
+                    weight: 0,
+                    fillColor: "#0f0",
+                    fillOpacity: 0.15
+                });
+                overlays.push(poly);
+            }
         }
     }
 
-        map.whenReady(() => {
-            // Only process if this is the latest request
-            if (requestId === filterRequestId) {
-                setupFilterListeners();
-            } else {
-                updateFilteredResults();
-            }
-        });
-    }
-    else {
-        setupFilterListeners();
-    }
+    console.debug(`Total iterations: ${iterationCount}`);
+    console.debug("Found graticules:", overlays.length, overlays);
+
+    return L.layerGroup(overlays);
 }
+    */
+
+function getUniqueGraticules(cachePoints) {
+    if (!Array.isArray(cachePoints) || cachePoints.length === 0) {
+        console.warn("cachePoints is empty or not an array");
+        return [];
+    }
+
+    const uniqueGraticules = new Set();
+
+    cachePoints.forEach((point, index) => {
+        if (!Array.isArray(point) || point.length !== 2 || typeof point[0] !== 'number' || typeof point[1] !== 'number') {
+            console.warn(`Invalid cachePoint at index ${index}:`, point);
+            return;
+        }
+        const lat = Math.floor(point[0]);
+        const lon = Math.floor(point[1]);
+        uniqueGraticules.add(`${lat}|${lon}`);
+    });
+
+    // Minimal debugging: Log the number of unique graticules found
+    console.log(`Found ${uniqueGraticules.size} unique graticules from ${cachePoints.length} points`);
+
+    return Array.from(uniqueGraticules).map(key => key.split('|').map(Number));
+}
+
+function highlightMissingGraticules(cachePoints, map) {
+    let overlays = [];
+    let { minLat, maxLat, minLon, maxLon } = getMapBoundaries(map);
+
+    for (let lat = minLat; lat <= maxLat; lat++) {
+        for (let lon = minLon; lon < maxLon; lon++) {
+            let found = cachePoints.some(p => p[0] >= lat && p[0] < lat+1 &&
+                                              p[1] >= lon && p[1] < lon+1);
+            if (!found) {
+                let poly = L.rectangle([[lat, lon],[lat+1, lon+1]], {
+                    color: "#A0A0A0",
+                    weight: 0,
+                    fillColor: "#A0A0A0",
+                    fillOpacity: 0.25
+                });
+                overlays.push(poly);
+            }
+        }
+    }
+    console.debug("Found missing graticules:", overlays);
+    return L.layerGroup(overlays);
+}
+
+function highlightFoundGraticules(graticules, map) {
+    // Validate inputs
+    if (!map || typeof map.getBounds !== 'function') {
+        console.error("Invalid map object: getBounds is not a function");
+        return L.layerGroup([]);
+    }
+    if (!Array.isArray(graticules)) {
+        console.error("graticules is not an array or is undefined/null");
+        return L.layerGroup([]);
+    }
+
+    const overlays = graticules
+            .filter(([lat, lon]) => typeof lat === 'number' && typeof lon === 'number' && !isNaN(lat) && !isNaN(lon))
+            .map(([lat, lon]) => L.rectangle([[lat, lon], [lat + 1, lon + 1]], {
+                color: "#0f0",
+                weight: 0,
+                fillColor: "#0f0",
+                fillOpacity: 0.15
+            }));
+
+        console.log(`Rendering ${overlays.length} graticule rectangles`);
+
+    return L.layerGroup(overlays);
+}
+
+
 function generateCountriesGrid(countries, total) {
     // Helper to get flag emoji from country name
     function getFlagEmojiFromCountryName(name) {
@@ -1919,6 +2267,17 @@ function setupFilterListeners() {
     });
 }
 
+
+
+
+
+document.getElementById("fileInput").addEventListener("change", function(event) {
+    const file = event.target.files[0];
+    if (file) {
+        parseGPX(file);
+    }
+});
+
 function updateFilteredResults() {
     filterRequestId++;
     const currentId = filterRequestId;
@@ -1927,12 +2286,6 @@ function updateFilteredResults() {
     displayResults(stats, currentId);
 }
 
-document.getElementById("fileInput").addEventListener("change", function(event) {
-    const file = event.target.files[0];
-    if (file) {
-        parseGPX(file);
-    }
-});
 
 // Add event listener for filter changes
 document.querySelectorAll('input[name="displayFilter"]').forEach(radio => {
