@@ -429,14 +429,6 @@ SOFTWARE.
         <label>
             <input type="checkbox" id="highlightCountries"> Highlight countries<br>
         </label>
-        <label>
-            <input type="checkbox" id="toggle-graticule"> Show graticules</label>
-        <label>
-            <input type="checkbox" id="toggle-found-graticules"> Highlight found graticules
-        </label>
-        <label>
-            <input type="checkbox" id="toggle-missing-graticules"> Highlight missing graticules
-        </label>
 
 
     </div>
@@ -589,6 +581,10 @@ SOFTWARE.
             "Aland": "Åland Islands",
             // Add more as needed
         };
+
+        let showGraticules = false;
+        let showFoundGraticules = false;
+        let showMissingGraticules = false;
 
 
 // fetch the geojson data for countries when the page loads 
@@ -829,6 +825,7 @@ function computeStatsFromCacheList(cacheList) {
     const attributes = {};
     const countries = {};
     const regions = {};
+    let graticules = [];
     let oldestDate = null;
     let favoSum = 0;
     let t5BoatCaches = 0;
@@ -887,6 +884,8 @@ function computeStatsFromCacheList(cacheList) {
         favoSum += cache.fp || 0;
     }
 
+    graticules = getUniqueGraticules(cacheCoords);
+
     return {
         cacheCoords,
         elevation,
@@ -904,6 +903,7 @@ function computeStatsFromCacheList(cacheList) {
         attributes,
         countries,
         regions,
+        graticules,
         oldestDate,
         t5BoatCaches,
         tbelow5BoatCaches,
@@ -1013,6 +1013,7 @@ function displayResults(stats, requestId) {
             <div>
                 <p><strong>Countries:</strong> ${Object.keys(stats.countries).length}</p>
                 <p><strong>Regions:</strong> ${Object.keys(stats.regions).length}</p>
+                <p><strong>Graticules:</strong> ${Object.keys(stats.graticules).length}</p>
             </div>
         </div>
         <h3>Caches on map</h3>
@@ -1132,37 +1133,39 @@ function displayResults(stats, requestId) {
         window._leafletMap = map; // Prevent duplicate maps
 
 
-
-        // Preprocess cachePoints to get unique graticules
-        const uniqueGraticules = getUniqueGraticules(stats.cacheCoords, map);
-
-
-
-        function toggleFoundGraticules(show) {
-            if (show) {
-                foundLayer = highlightFoundGraticules(uniqueGraticules, map).addTo(map);
-            } else {
+        function toggleFoundGraticules() {
+            if ( !showFoundGraticules ) {
+                showFoundGraticules = true;
+                if( !showGraticules ) {
+                    toggleGraticuleLayer(map);
+                }
+                foundLayer = highlightFoundGraticules(stats.graticules, map).addTo(map);
+            } 
+            else {
+                showFoundGraticules = false;
+                if( showGraticules) {
+                    toggleGraticuleLayer(map);
+                }
                 if (foundLayer) map.removeLayer(foundLayer);
             }
         }
 
-        document.getElementById("toggle-found-graticules").addEventListener("change", e => {
-            toggleFoundGraticules(e.target.checked);
-        });
-
-        function toggleMissingGraticules(show) {
-            if (show) {
+        function toggleMissingGraticules() {
+            if ( !showMissingGraticules ) {
+                showMissingGraticules = true;
+                if( !showGraticules ) {
+                    toggleGraticuleLayer(map);
+                }
                 console.debug("Showing missing graticules");
                 missingLayer = highlightMissingGraticules(stats.cacheCoords, map).addTo(map);
             } else {
+                showMissingGraticules = false;
+                if( showGraticules) {
+                    toggleGraticuleLayer(map);
+                }
                 if (missingLayer) map.removeLayer(missingLayer);
             }
         }
-
-        document.getElementById("toggle-missing-graticules").addEventListener("change", e => {
-            toggleMissingGraticules(e.target.checked);
-        });
-
 
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             attribution: '&copy; OpenStreetMap contributors'
@@ -1233,8 +1236,6 @@ function displayResults(stats, requestId) {
         };
         L.control.fullscreen().addTo(map);
 
-
-
          // Create a green awesome marker with globe icon
         const greenGlobeIcon = L.AwesomeMarkers.icon({
             icon: 'globe',
@@ -1287,6 +1288,7 @@ function displayResults(stats, requestId) {
         const bounds = L.latLngBounds(stats.cacheCoords);
         map.fitBounds(bounds, {padding: [20, 20], animate: false});
 
+
         function addResetViewButton(map) {
             const controlContainer = map.zoomControl._container;
 
@@ -1337,24 +1339,48 @@ function displayResults(stats, requestId) {
             }
         });
 
-        function toggleGraticuleLayer(show) {
-            if (show) {
-                console.debug("Showing graticule");
-                graticule.addTo(map);
-            } else {
+        function toggleGraticuleLayer(map) {
+            if( showGraticules ) {
+                showGraticules = false;
                 console.debug("Hiding graticule");
                 map.removeLayer(graticule);
             }
+            else {
+                console.debug("Showing graticule");
+                showGraticules = true;
+                graticule.addTo(map);
+            }
         }
 
-        toggleGraticuleLayer(document.getElementById("toggle-graticule").checked);
-        toggleFoundGraticules(document.getElementById("toggle-found-graticules").checked);
-        toggleMissingGraticules(document.getElementById("toggle-missing-graticules").checked);
+        function addToggleGraticuleButton(map) {
+            const controlContainer = map.zoomControl._container;
 
+            const button = L.DomUtil.create('a', 'leaflet-control-zoom-reset', controlContainer);
+            button.innerHTML = '🌐'; // Vaihtoehtoisesti: fa-globe
+            button.href = '#';
+            button.title = 'Toggle graticules';
 
-        document.getElementById("toggle-graticule").addEventListener("change", function(e) {
-            toggleGraticuleLayer(e.target.checked);
-        });
+            L.DomEvent.on(button, 'click', function(e) {
+                toggleGraticuleLayer(map);
+            });
+        }
+
+        addToggleGraticuleButton(map);
+
+        function addToggleColoredGraticulesButton(map) {
+            const controlContainer = map.zoomControl._container;
+
+            const button = L.DomUtil.create('a', 'leaflet-control-zoom-reset', controlContainer);
+            button.innerHTML = '#'; // Vaihtoehtoisesti: fa-globe
+            button.href = '#';
+            button.title = 'Toggle found/unfound graticules';
+
+            L.DomEvent.on(button, 'click', function(e) {
+                toggleFoundGraticules();
+                toggleMissingGraticules();
+            });
+        }
+        addToggleColoredGraticulesButton(map);
 
         map.whenReady(() => {
             // Only process if this is the latest request
