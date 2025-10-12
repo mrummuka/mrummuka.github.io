@@ -483,38 +483,73 @@ function processCSV() {
     reader.readAsText(file);
 }
 
-async function fetchElevationsInChunks(latList, lonList, chunkSize = 50) {
-    const elevationResults = [];
-    logger.debug("Fetching elevations for", latList.length, "coordinates in chunks of", chunkSize);
+async function fetchElevationsInChunks(latList, lonList, chunkSize = 100) {
+    const elevationCache = JSON.parse(localStorage.getItem('elevationCache')) || {};
+    const results = new Array(latList.length).fill(null);
+    const toFetch = [];
 
-    for (let i = 0; i < latList.length; i += chunkSize) {
-        const latChunk = latList.slice(i, i + chunkSize);
-        const lonChunk = lonList.slice(i, i + chunkSize);
+    // 1. Check cache first
+    for (let i = 0; i < latList.length; i++) {
+        const key = `${latList[i].toFixed(4)},${lonList[i].toFixed(4)}`;
+        if (elevationCache[key] !== undefined) {
+            results[i] = elevationCache[key];
+        } else {
+            toFetch.push({ index: i, lat: latList[i], lon: lonList[i] });
+        }
+    }
 
-        const latParam = latChunk.join(",");
-        const lonParam = lonChunk.join(",");
+    logger.debug(`Found ${latList.length - toFetch.length} elevations in cache. Fetching ${toFetch.length} new elevations.`);
 
-        const url = `https://api.open-meteo.com/v1/elevation?latitude=${latParam}&longitude=${lonParam}`;
+    if (toFetch.length === 0) {
+        return results;
+    }
+
+    // 2. Fetch missing elevations in chunks
+    let limitExceeded = false;
+    for (let i = 0; i < toFetch.length; i += chunkSize) {
+        if (limitExceeded) break;
+
+        const chunk = toFetch.slice(i, i + chunkSize);
+        const latChunk = chunk.map(p => p.lat);
+        const lonChunk = chunk.map(p => p.lon);
+        const url = `https://api.open-meteo.com/v1/elevation?latitude=${latChunk.join(",")}&longitude=${lonChunk.join(",")}`;
 
         try {
             const resp = await fetch(url);
             const data = await resp.json();
 
+            if (data.error && data.reason && data.reason.toLowerCase().includes("limit")) {
+                logger.warn("Elevation API rate limit exceeded. Stopping further requests.");
+                limitExceeded = true;
+                continue; // Stop fetching more chunks
+            }
+
             if (Array.isArray(data.elevation)) {
-                elevationResults.push(...data.elevation);
+                // 3. Populate results and update cache
+                data.elevation.forEach((elev, j) => {
+                    const originalIndex = chunk[j].index;
+                    const key = `${chunk[j].lat.toFixed(4)},${chunk[j].lon.toFixed(4)}`;
+                    results[originalIndex] = elev;
+                    elevationCache[key] = elev;
+                });
             } else {
                 logger.warn("Unexpected elevation response:", data);
-                elevationResults.push(...new Array(latChunk.length).fill(null));
             }
         } catch (err) {
             logger.error("Elevation fetch failed:", err);
-            elevationResults.push(...new Array(latChunk.length).fill(null));
+            // Don't try subsequent chunks if one fails
+            limitExceeded = true; 
         }
     }
-    logger.debug("Fetched elevations:", elevationResults.length, "results");
-    logger.debug("Elevation results:", elevationResults);
 
-    return elevationResults;
+    // 4. Save updated cache to localStorage
+    try {
+        localStorage.setItem('elevationCache', JSON.stringify(elevationCache));
+    } catch (e) {
+        logger.error("Failed to save elevation cache to localStorage:", e);
+    }
+
+    return results;
 }
 
 function addReason(row, reason) {
