@@ -66,6 +66,20 @@ function renderCollectSelectionsTestResult(container, test, passed, actual) {
     container.appendChild(resultEl);
 }
 
+function renderShuffleTestResult(container, test, passed, actual) {
+    const resultEl = document.createElement('div');
+    resultEl.className = `test-case ${passed ? 'pass' : 'fail'}`;
+    resultEl.innerHTML = `
+        <h3>${test.name}: ${passed ? 'PASS' : 'FAIL'}</h3>
+        <div class="details">
+            <p><strong>Description:</strong> ${test.description}</p>
+            <p><strong>Expected:</strong> <code>${test.expected}</code></p>
+            <p><strong>Actual:</strong> <code>${actual}</code></p>
+        </div>
+    `;
+    container.appendChild(resultEl);
+}
+
 function assert(condition, message) {
     if (!condition) {
         throw new Error(message || "Assertion failed");
@@ -95,6 +109,7 @@ function runAllTests() {
     runUtilityFunctionTests();
     runGetExtremeTests();
     runCollectSelectionsTests();
+    runShuffleTests();
 }
 
 function runUtilityFunctionTests() {
@@ -145,6 +160,7 @@ function runGetExtremeTests() {
 function runCollectSelectionsTests() {
     const getTestData = () => JSON.parse(JSON.stringify(mockCaches)).map(c => ({ ...c, Hidden: new Date(c.Hidden), Reasons: [] }));
 
+
     const testCases = [
         {
             name: "Identifies oldest cache",
@@ -155,6 +171,7 @@ function runCollectSelectionsTests() {
                 collectSelections(data);
                 const oldest = data.find(c => c.Reasons.includes('Listan vanhin'));
                 return oldest ? oldest.ID : null;
+
             },
             validator: (actual) => actual === 'GC5' || actual === 'GC6',
             expected: "GC5 or GC6"
@@ -168,6 +185,7 @@ function runCollectSelectionsTests() {
                 collectSelections(data);
                 const popular = data.find(c => c.Reasons.includes('Listan suosituin'));
                 return popular ? popular.ID : null;
+
             },
             validator: (actual) => actual === 'GC2' || actual === 'GC3',
             expected: "GC2 or GC3"
@@ -181,6 +199,7 @@ function runCollectSelectionsTests() {
                 collectSelections(data);
                 const oldestFinland = data.find(c => c.ID === 'GC1');
                 const oldestSweden = data.find(c => c.ID === 'GC5' || c.ID === 'GC6');
+
                 return oldestFinland.Reasons.includes('Maan vanhin') && oldestSweden.Reasons.includes('Maan vanhin');
             },
             validator: (actual) => actual === true,
@@ -195,6 +214,7 @@ function runCollectSelectionsTests() {
                 selectedIDs.clear();
                 collectSelections(data, ['Listan vanhin']);
                 const selected = data.filter(c => c.Reasons.length > 0);
+
                 return selected.length === 1 && selected[0].Reasons.includes('Listan vanhin');
             },
             validator: (actual) => actual === true,
@@ -214,6 +234,7 @@ function runCollectSelectionsTests() {
                 data.find(c => c.ID === 'GC2').Difficulty = 2;
 
                 // Run for 'Maan vanhin'
+
                 collectSelections(data, ['Maan vanhin']);
                 // Run for 'Ainoa'
                 collectSelections(data, ['Ainoa Difficulty 1']);
@@ -231,4 +252,131 @@ function runCollectSelectionsTests() {
         const passed = test.validator(actual);
         return { passed, actual };
     }, 'collect-test-results', renderCollectSelectionsTestResult);
+}
+
+
+function runShuffleTests() {
+    const getTestData = () => JSON.parse(JSON.stringify(mockCaches)).map(c => ({ ...c, Hidden: new Date(c.Hidden), Reasons: [] }));
+
+    // Mock the global functions and objects that shuffleCaches depends on
+    const mockDependencies = (highlightedRowData = null, filteredData = null) => {
+        const mockApi = {
+            rows: (selector) => {
+                if (selector === '.row-highlight') {
+                    return { data: () => [highlightedRowData] };
+                }
+                // For { search: 'applied' }
+                return { data: () => ({ toArray: () => filteredData || allData.map(c => [c.ID]) }) };
+            },
+            columns: () => ({
+                every: (callback) => {
+                    // Simulate no filters for simplicity in mock
+                    callback({ search: () => '' });
+                },
+                search: () => ({ draw: () => {} }), // Mock chaining
+            }),
+        };
+        // Mock DataTable API
+        window.jQuery.fn.DataTable = () => mockApi;
+
+        // Mock UI update functions to prevent errors and track calls
+        window.displayFullTable = jest.fn();
+        window.visualizeMap = jest.fn();
+        window.updateShuffleFilteredButtonState = jest.fn();
+    };
+    // Simple mock function creator
+    const jest = { fn: () => {
+        let calls = [];
+        const mockFn = (...args) => { calls.push(args); };
+        mockFn.mock = { calls: calls };
+        return mockFn;
+    }};
+
+
+    const testCases = [
+        {
+            name: "Full Shuffle changes selection",
+            description: "When multiple candidates exist, a full shuffle should pick a different one.",
+            setup: () => {
+                allData = getTestData();
+                mockDependencies();
+
+                // Initial selection (seed 0.4 picks GC2 for max FP)
+                Math.random = () => 0.4;
+                collectSelections(allData);
+                const initialSelection = allData.find(c => c.Reasons.includes('Listan suosituin')).ID;
+                assert(initialSelection === 'GC2', "Initial selection should be GC2");
+
+                // Change seed for shuffle (seed 0.6 picks GC3 for max FP)
+                Math.random = () => 0.6;
+                window.shuffleCaches(false); // Run full shuffle
+
+                const finalSelection = allData.find(c => c.Reasons.includes('Listan suosituin')).ID;
+                return finalSelection;
+            },
+            validator: (actual) => actual === 'GC3',
+            expected: "GC3"
+        },
+        {
+            name: "Single-Item Shuffle works correctly",
+            description: "Shuffling a selected item should only re-run selection for that item's reasons.",
+            setup: () => {
+                allData = getTestData();
+                // Highlight GC2, which was selected for 'Listan suosituin'
+                mockDependencies([['GC2']]);
+
+                // Initial selection
+                Math.random = () => 0.4; // Picks GC2 for 'suosituin', GC5 for 'vanhin'
+                collectSelections(allData);
+                const oldestBefore = allData.find(c => c.Reasons.includes('Listan vanhin')).ID;
+
+                // Shuffle with a seed that would pick GC3 for 'suosituin' but GC6 for 'vanhin'
+                Math.random = () => 0.6;
+                window.shuffleCaches(false); // Run single-item shuffle
+
+                const popularAfter = allData.find(c => c.Reasons.includes('Listan suosituin')).ID;
+                const oldestAfter = allData.find(c => c.Reasons.includes('Listan vanhin')).ID;
+
+                // Check that 'suosituin' changed, but 'vanhin' did not.
+                return { popularChanged: popularAfter === 'GC3', oldestUnchanged: oldestAfter === oldestBefore };
+            },
+            validator: (actual) => actual.popularChanged && actual.oldestUnchanged,
+            expected: "{ popularChanged: true, oldestUnchanged: true }"
+        },
+        {
+            name: "Filtered Shuffle re-runs correct reasons",
+            description: "Shuffle filtered should only re-run reasons from visible rows, preserving other selections.",
+            setup: () => {
+                allData = getTestData();
+                // Initial selection
+                Math.random = () => 0.4; // Picks GC2 for 'suosituin', GC5 for 'vanhin'
+                collectSelections(allData);
+                const oldestBefore = allData.find(c => c.Reasons.includes('Listan vanhin')).ID;
+                assert(oldestBefore === 'GC5', "Oldest before should be GC5");
+
+                // Simulate filtering the table to only show the 'Listan suosituin' cache (GC2)
+                const filteredData = allData.filter(c => c.ID === 'GC2').map(c => [c.ID, 'name', 'type', 'size', 'diff', 'terr', 'country', 'region', 'county', 'date', 'finds', 'fp', 'elev', 'Listan suosituin']);
+                mockDependencies(null, filteredData);
+
+                // Shuffle with a seed that would pick GC3 for 'suosituin' and GC6 for 'vanhin'
+                Math.random = () => 0.6;
+                window.shuffleCaches(true); // Run filtered shuffle
+
+                const popularAfter = allData.find(c => c.Reasons.includes('Listan suosituin')).ID;
+                const oldestAfter = allData.find(c => c.Reasons.includes('Listan vanhin')).ID;
+
+                // Check that 'suosituin' changed, but 'vanhin' (which was filtered out) did not.
+                return { popularChanged: popularAfter === 'GC3', oldestUnchanged: oldestAfter === oldestBefore };
+            },
+            validator: (actual) => actual.popularChanged && actual.oldestUnchanged,
+            expected: "{ popularChanged: true, oldestUnchanged: true }"
+        }
+    ];
+
+    runTestSuite(testCases, (test) => {
+        const actual = test.setup();
+        const passed = test.validator(actual);
+
+        return { passed, actual: JSON.stringify(actual) };
+    }, 'shuffle-test-results', renderShuffleTestResult);
 }

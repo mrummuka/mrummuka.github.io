@@ -617,6 +617,117 @@ function collectSelections(data, reasonsToRun = null) {
     return selected;
 }
 
+async function shuffleCaches(isFilteredShuffle) {
+    console.log(`[Shuffle] Initiated. isFilteredShuffle: ${isFilteredShuffle}`);
+    const table = $('#allCaches').DataTable();
+    const highlightedRow = table.rows('.row-highlight').data()[0];
+
+    // 1. Capture current filter state
+    const currentFilters = [];
+    table.columns().every(function () {
+        if (this.search()) {
+            currentFilters.push({ index: this.index(), search: this.search() });
+        }
+    });
+    console.log('[Shuffle] Captured filters:', currentFilters);
+
+    // 2. Determine which "rare" categories (reasons) to re-shuffle.
+    let reasonsToShuffle = null; // null means all reasons
+
+    if (highlightedRow) {
+        // --- Scenario 1: Single-item shuffle ---
+        const cacheIdToShuffle = highlightedRow[0];
+        console.log(`[Shuffle] Mode: Single item shuffle for: ${cacheIdToShuffle}`);
+        const cacheToShuffle = allData.find(c => c.ID === cacheIdToShuffle);
+        reasonsToShuffle = cacheToShuffle?.Reasons || null;
+    } else if (isFilteredShuffle) {
+        // --- Scenario 2: Filtered shuffle ---
+        console.log('[Shuffle] Mode: Filtered shuffle');
+        const visibleRowsData = table.rows({ search: 'applied' }).data().toArray();
+        const reasonSet = new Set();
+        visibleRowsData.forEach(rowData => {
+            const cacheId = rowData[0];
+            const cache = allData.find(c => c.ID === cacheId);
+            if (cache && cache.Reasons) {
+                cache.Reasons.forEach(reason => reasonSet.add(reason));
+            }
+        });
+        reasonsToShuffle = Array.from(reasonSet);
+    } else {
+        // --- Scenario 3: Full shuffle ---
+        console.log('[Shuffle] Mode: Full shuffle on all categories.');
+        // reasonsToShuffle remains null to indicate all categories
+    }
+
+    console.log(`[Shuffle] Using full data pool of ${allData.length} caches for selection.`);
+    if (reasonsToShuffle) {
+        console.log(`[Shuffle] Re-running selection for reasons:`, reasonsToShuffle);
+    } else {
+        console.log('[Shuffle] Re-running selection for ALL reasons.');
+    }
+
+    // 3. Remove caches that are currently selected for the reasons we are about to re-shuffle.
+    // This allows them to be picked again, or for a new cache to take their place, while preserving other selections.
+    allData.forEach(cache => {
+        if (!cache.Reasons || cache.Reasons.length === 0) return;
+
+        // If reasonsToShuffle is null (full shuffle), all reasons are targeted.
+        // Otherwise, only reasons matching the shuffle scope are targeted.
+        const reasonsToRemove = reasonsToShuffle ? cache.Reasons.filter(r => reasonsToShuffle.includes(r)) : cache.Reasons;
+        
+        if (reasonsToRemove.length > 0) {
+            // Keep only the reasons that are NOT being shuffled
+            cache.Reasons = cache.Reasons.filter(r => !reasonsToRemove.includes(r));
+            // If no reasons are left, remove it from the selected set
+            if (cache.Reasons.length === 0) {
+                selectedIDs.delete(cache.ID);
+            }
+        }
+    });
+
+    // 4. Re-run the selection for the targeted reasons, always using the full data pool.
+    collectSelections(allData, reasonsToShuffle);
+
+    // 5. Update UI
+    const newDataToDisplay = allData.filter(r => r.Reasons?.length > 0);
+    console.log(`[Shuffle] New selection contains ${newDataToDisplay.length} caches.`);
+    displayFullTable(allData, newDataToDisplay, true);
+    visualizeMap(allData, newDataToDisplay);
+
+    // 6. Reapply filters after a short delay to ensure DataTable is ready
+    if (currentFilters.length > 0) {
+        setTimeout(() => {
+            console.log('[Shuffle] Re-applying filters...');
+            const newTable = $('#allCaches').DataTable();
+            // Clear any existing search
+            newTable.columns().search('').draw();
+            // Apply captured filters
+            currentFilters.forEach(filter => {
+                newTable.column(filter.index).search(filter.search, true, false);
+            });
+            newTable.draw();
+            console.log('[Shuffle] Filters reapplied.');
+        }, 100); // A short delay is often sufficient
+    }
+}
+// Make it globally available for onclick handlers and tests
+window.shuffleCaches = shuffleCaches;
+
+function updateShuffleFilteredButtonState() {
+    const shuffleFilteredButton = document.getElementById('shuffleFilteredButton');
+    if (!shuffleFilteredButton) return;
+
+    const table = $('#allCaches').DataTable();
+    let hasFilters = false;
+    table.columns().every(function() {
+        if (this.search()) {
+            hasFilters = true;
+        }
+    });
+
+    shuffleFilteredButton.disabled = !hasFilters;
+}
+
 // Visualize the map with all caches or selected ones
 // If showHeatmap is checked, display a heatmap of all caches
 // Otherwise, show markers for each cache with detailed info in popups
@@ -886,21 +997,26 @@ function initDataTableFilters(tableSelector) {
 // county, hidden date, finds, favorite points, elevation, and additional reasons
 function displayFullTable(data, selecteddata, onlySelected = false) {
     let html = onlySelected?  "<h2>Valitut kätköt</h2>" : "<h2>Kaikki kätköt</h2>";
-    const tableData = onlySelected ? selecteddata : data;
-    const resultsDiv = document.getElementById("results");
+    let headerHtml = html;
 
     // Add Shuffle button if showing selected caches
     if (onlySelected) {
-        html += `
+        headerHtml += `
             <button onclick="shuffleCaches(false)">Shuffle</button>
-            <button onclick="shuffleCaches(true)">Shuffle filtered</button>
+            <button id="shuffleFilteredButton" onclick="shuffleCaches(true)">Shuffle filtered</button>
         `;
     }
 
+    // Create header container if it doesn't exist
+    if (!document.getElementById('results-header')) {
+        document.getElementById('results').innerHTML = '<div id="results-header"></div><div id="table-container"></div>';
+    }
+    document.getElementById('results-header').innerHTML = headerHtml;
+
     // If table already exists, just update its data
     if ($.fn.DataTable.isDataTable('#allCaches')) {
-        resultsDiv.innerHTML = html; // Update title and buttons
         const table = $('#allCaches').DataTable();
+        const tableData = onlySelected ? selecteddata : data;
         const tableRows = tableData.map(r => {
             const extra = r.Reasons.join(", ");
             const hiddenDate = r.Hidden instanceof Date && !isNaN(r.Hidden) ? r.Hidden.toISOString().split("T")[0] : "";
@@ -915,42 +1031,7 @@ function displayFullTable(data, selecteddata, onlySelected = false) {
 
     // --- First time table creation ---
     html += "<table id='allCaches' class='display' style='width:100%'><thead><tr><th>ID</th><th>Nimi</th><th>Tyyppi</th><th>Koko</th><th>Vaikeus</th><th>Maasto</th><th>Maa</th><th>Alue</th><th>Kunta</th><th>Piilotettu</th><th>Löydöt</th><th>FP</th><th>Korkeus</th><th>Lisätiedot</th></tr></thead><tbody>";
-
-    // This function needs to be globally accessible for the onclick handlers
-    if (typeof window.shuffleCaches !== 'function') {
-        window.shuffleCaches = function(useFilteredData) {
-            const table = $('#allCaches').DataTable();
-            const highlightedRow = table.rows('.row-highlight').data()[0];
-
-            let dataPool = useFilteredData 
-                ? allData.filter(row => {
-                    const filteredIds = new Set(table.rows({ search: 'applied' }).data().toArray().map(r => r[0]));
-                    return filteredIds.has(row.ID);
-                })
-                : allData;
-
-            if (highlightedRow) {
-                // Single cache shuffle
-                const cacheIdToShuffle = highlightedRow[0];
-                const cacheToShuffle = allData.find(c => c.ID === cacheIdToShuffle);
-                if (cacheToShuffle && cacheToShuffle.Reasons) {
-                    const reasons = cacheToShuffle.Reasons;
-                    // Clear reasons from the cache being shuffled so it can be re-selected
-                    cacheToShuffle.Reasons = [];
-                    selectedIDs.delete(cacheToShuffle.ID);
-
-                    // Re-run selection only for the specific reasons of the selected cache
-                    collectSelections(dataPool, reasons);
-                }
-            } else {
-                // Full or filtered shuffle
-                collectSelections(dataPool);
-            }
-            const newDataToDisplay = allData.filter(r => r.Reasons?.length > 0);
-            displayFullTable(allData, newDataToDisplay, true);
-            visualizeMap(allData, newDataToDisplay);
-        }
-    }
+    const tableData = onlySelected ? selecteddata : data;
 
     tableData.forEach(r => {
         const extra = r.Reasons.join(", ");
@@ -959,7 +1040,7 @@ function displayFullTable(data, selecteddata, onlySelected = false) {
     });
     html += "</tbody></table>";
 
-    resultsDiv.innerHTML = html;
+    document.getElementById('table-container').innerHTML = html.substring(html.indexOf("<table"));
 
     // Use setTimeout to ensure the DOM is fully updated before initializing DataTable
     $(document).ready(function() {
@@ -999,6 +1080,8 @@ function displayFullTable(data, selecteddata, onlySelected = false) {
             const ids = new Set(filteredData.map(row => row[0])); // Assuming ID is column 0
             const matchingRows = allData.filter(row => ids.has(row.ID));
             visualizeMap(allData, matchingRows); // Show only filtered caches
+            // Update the shuffle button state whenever filters change
+            updateShuffleFilteredButtonState();
         });
     });
 }
