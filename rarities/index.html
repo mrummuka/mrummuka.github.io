@@ -273,16 +273,35 @@ SOFTWARE.
         // 'extreme' can be 'max' or 'min'
         // Example: getExtreme(data, "FP", "max") returns the object with the highest FP value
         function getExtreme(arr, field, extreme) {
-            return arr.reduce((best, curr) => {
-                if (curr[field] == null) return best;
-                if (!best || (extreme === 'max' ? curr[field] > best[field] : curr[field] < best[field])) {
-                    return curr;
+            if (!arr || arr.length === 0) return null;
+
+            // 1. Find the extreme value first.
+            let extremeValue = null;
+            for (const item of arr) {
+                const value = item[field];
+                if (value == null) continue;
+                if (extremeValue === null || (extreme === 'max' ? value > extremeValue : value < extremeValue)) {
+                    extremeValue = value;
                 }
-                return best;
-            }, null);
+            }
+
+            if (extremeValue === null) return null;
+
+            // 2. Collect all items that match the extreme value.
+            const candidates = arr.filter(item => item[field] === extremeValue);
+
+            // 3. Pick one randomly.
+            if (candidates.length > 0) {
+                const randomIndex = Math.floor(Math.random() * candidates.length);
+                return candidates[randomIndex];
+            }
+
+            return null;
         }
 
         function processFile() {
+            // Reset shuffle button state
+            document.getElementById('shuffleButton')?.remove();
             const fileInput = document.getElementById('inputFile');
             const fileType = document.getElementById('fileType').value;
             if (!fileInput.files.length) return alert('Valitse tiedosto');
@@ -636,7 +655,7 @@ SOFTWARE.
                 }
             }
 
-            add(getExtreme(data, "Hidden", "min"), "Listan vanhin");
+            add(getExtreme(data, "Hidden", "min"), "Listan vanhin"); // Oldest is usually unique
             add(getExtreme(data, "FP", "max"), "Listan suosituin");
             add(getExtreme(data, "Elevation (m)", "max"), "Listan korkein");
             add(getExtreme(data, "Elevation (m)", "min"), "Listan matalin");
@@ -674,7 +693,7 @@ SOFTWARE.
                     add(getExtreme(countyGroups[county], "Hidden", "min"), `Kunnan vanhin`);
                     add(getExtreme(countyGroups[county], "FP", "max"), `Kunnan suosituin`);
                     add(getExtreme(countyGroups[county], "Elevation (m)", "max"), `Kunnan korkein`);
-                    add(getExtreme(countyGroups[county], "Elevation (m)", "min"), `Kunnan matalin`);
+                    add(getExtreme(countyGroups[county], "Elevation (m)","min"), `Kunnan matalin`);
                 }
             }
 
@@ -969,6 +988,22 @@ SOFTWARE.
         // county, hidden date, finds, favorite points, elevation, and additional reasons
         function displayFullTable(data, selecteddata, onlySelected = false) {
             let html = onlySelected?  "<h2>Valitut kätköt</h2>" : "<h2>Kaikki kätköt</h2>";
+
+            // Add Shuffle button if showing selected caches
+            if (onlySelected) {
+                const shuffleButton = document.createElement('button');
+                shuffleButton.id = 'shuffleButton';
+                shuffleButton.textContent = 'Shuffle';
+                shuffleButton.onclick = function() {
+                    // Re-run selection and update UI
+                    collectSelections(allData);
+                    const newDataToDisplay = allData.filter(r => r.Reasons?.length > 0);
+                    displayFullTable(allData, newDataToDisplay, true);
+                    visualizeMap(allData, newDataToDisplay);
+                };
+                document.getElementById("results").innerHTML = html;
+                document.getElementById("results").appendChild(shuffleButton);
+            }
             html += "<table id='allCaches' class='display'><thead><tr><th>ID</th><th>Nimi</th><th>Tyyppi</th><th>Koko</th><th>Vaikeus</th><th>Maasto</th><th>Maa</th><th>Alue</th><th>Kunta</th><th>Piilotettu</th><th>Löydöt</th><th>FP</th><th>Korkeus</th><th>Lisätiedot</th></tr></thead><tbody>";
             const tableData = onlySelected ? selecteddata : data;
 
@@ -978,7 +1013,12 @@ SOFTWARE.
                 html += `<tr><td>${r.ID}</td><td>${r["Cache name"]}</td><td>${r.Type}</td><td>${r.Size}</td><td>${r.Difficulty}</td><td>${r.Terrain}</td><td>${r.Country || ''}</td><td>${r.Region || ''}</td><td>${r.County || ''}</td><td>${hiddenDate}</td><td>${r.Finds}</td><td>${r.FP}</td><td>${r["Elevation (m)"]}</td><td>${extra}</td></tr>`;
             });
             html += "</tbody></table>";
-            document.getElementById("results").innerHTML = html;
+
+            if (onlySelected) {
+                $('#results').append(html.substring(html.indexOf("<table")));
+            } else {
+                document.getElementById("results").innerHTML = html;
+            }
 
             $(document).ready(function () {
                 const table = $('#allCaches').DataTable({
