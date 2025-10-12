@@ -121,6 +121,19 @@ let dtTypeFilter = null; // null means no filter
 let dtSizeFilter = null;
 let allData = [], selectedIDs = new Set(), map, markerLayer, markerMap = {};
 
+// --- Logger ---
+const DEBUG = false; // Set to true to see detailed shuffle logs
+const logger = {
+    debug: (...args) => {
+        if (DEBUG) {
+            console.log(...args);
+        }
+    },
+    info: (...args) => console.info(...args),
+    warn: (...args) => console.warn(...args),
+    error: (...args) => console.error(...args),
+};
+
 // Convert coordinate string to decimal format
 // Format: "N 60° 10.123", "E 24° 56.789"
 // Returns: 60.17038, 24.94648
@@ -255,7 +268,7 @@ function processGPX(file) {
             if (!TYPE_NAMES_ICONS.hasOwnProperty(type)) {
                 // Optionally: skip this cache, or set to "Unknown", or log a warning
                 continue; // to skip
-                console.warn(`Skipping unexpected cache type: "${type}"`);
+                logger.warn(`Skipping unexpected cache type: "${type}"`);
             }
 
             types[type] = (types[type] || 0) + 1;
@@ -472,7 +485,7 @@ function processCSV() {
 
 async function fetchElevationsInChunks(latList, lonList, chunkSize = 50) {
     const elevationResults = [];
-    console.debug("Fetching elevations for", latList.length, "coordinates in chunks of", chunkSize);
+    logger.debug("Fetching elevations for", latList.length, "coordinates in chunks of", chunkSize);
 
     for (let i = 0; i < latList.length; i += chunkSize) {
         const latChunk = latList.slice(i, i + chunkSize);
@@ -490,16 +503,16 @@ async function fetchElevationsInChunks(latList, lonList, chunkSize = 50) {
             if (Array.isArray(data.elevation)) {
                 elevationResults.push(...data.elevation);
             } else {
-                console.warn("Unexpected elevation response:", data);
+                logger.warn("Unexpected elevation response:", data);
                 elevationResults.push(...new Array(latChunk.length).fill(null));
             }
         } catch (err) {
-            console.error("Elevation fetch failed:", err);
+            logger.error("Elevation fetch failed:", err);
             elevationResults.push(...new Array(latChunk.length).fill(null));
         }
     }
-    console.debug("Fetched elevations:", elevationResults.length, "results");
-    console.debug("Elevation results:", elevationResults);
+    logger.debug("Fetched elevations:", elevationResults.length, "results");
+    logger.debug("Elevation results:", elevationResults);
 
     return elevationResults;
 }
@@ -618,7 +631,7 @@ function collectSelections(data, reasonsToRun = null) {
 }
 
 async function shuffleCaches(isFilteredShuffle) {
-    console.log(`[Shuffle] Initiated. isFilteredShuffle: ${isFilteredShuffle}`);
+    logger.debug(`[Shuffle] Initiated. isFilteredShuffle: ${isFilteredShuffle}`);
     const table = $('#allCaches').DataTable();
     const highlightedRow = table.rows('.row-highlight').data()[0];
 
@@ -629,7 +642,7 @@ async function shuffleCaches(isFilteredShuffle) {
             currentFilters.push({ index: this.index(), search: this.search() });
         }
     });
-    console.log('[Shuffle] Captured filters:', currentFilters);
+    logger.debug('[Shuffle] Captured filters:', currentFilters);
 
     // 2. Determine which "rare" categories (reasons) to re-shuffle.
     let reasonsToShuffle = null; // null means all reasons
@@ -637,12 +650,14 @@ async function shuffleCaches(isFilteredShuffle) {
     if (highlightedRow) {
         // --- Scenario 1: Single-item shuffle ---
         const cacheIdToShuffle = highlightedRow[0];
-        console.log(`[Shuffle] Mode: Single item shuffle for: ${cacheIdToShuffle}`);
+        logger.debug(`[Shuffle] Mode: Single item shuffle for: ${cacheIdToShuffle}`);
+        // Find the cache from the master data list, which has its reasons populated.
+        logger.debug('[Shuffle Debug] allData before find:', JSON.parse(JSON.stringify(allData.map(c => ({ ID: c.ID, Reasons: c.Reasons })))));
         const cacheToShuffle = allData.find(c => c.ID === cacheIdToShuffle);
         reasonsToShuffle = cacheToShuffle?.Reasons || null;
     } else if (isFilteredShuffle) {
         // --- Scenario 2: Filtered shuffle ---
-        console.log('[Shuffle] Mode: Filtered shuffle');
+        logger.debug('[Shuffle] Mode: Filtered shuffle');
         const visibleRowsData = table.rows({ search: 'applied' }).data().toArray();
         const reasonSet = new Set();
         visibleRowsData.forEach(rowData => {
@@ -655,15 +670,16 @@ async function shuffleCaches(isFilteredShuffle) {
         reasonsToShuffle = Array.from(reasonSet);
     } else {
         // --- Scenario 3: Full shuffle ---
-        console.log('[Shuffle] Mode: Full shuffle on all categories.');
+        logger.debug('[Shuffle] Mode: Full shuffle on all categories.');
         // reasonsToShuffle remains null to indicate all categories
     }
 
-    console.log(`[Shuffle] Using full data pool of ${allData.length} caches for selection.`);
+    logger.debug(`[Shuffle] Using full data pool of ${allData.length} caches for selection.`);
     if (reasonsToShuffle) {
-        console.log(`[Shuffle] Re-running selection for reasons:`, reasonsToShuffle);
+        logger.debug(`[Shuffle] Re-running selection for reasons:`, reasonsToShuffle);
+        if (reasonsToShuffle.length === 0) logger.warn("[Shuffle] reasonsToShuffle is an empty array. This might indicate an issue.");
     } else {
-        console.log('[Shuffle] Re-running selection for ALL reasons.');
+        logger.debug('[Shuffle] Re-running selection for ALL reasons.');
     }
 
     // 3. Remove caches that are currently selected for the reasons we are about to re-shuffle.
@@ -674,30 +690,33 @@ async function shuffleCaches(isFilteredShuffle) {
         // If reasonsToShuffle is null (full shuffle), all reasons are targeted.
         // Otherwise, only reasons matching the shuffle scope are targeted.
         const reasonsToRemove = reasonsToShuffle ? cache.Reasons.filter(r => reasonsToShuffle.includes(r)) : cache.Reasons;
-        
+
         if (reasonsToRemove.length > 0) {
+            if (reasonsToShuffle) { // For single/filtered shuffle, only clear reasons if the cache is being replaced
+                logger.debug(`[Shuffle] Clearing reasons ${JSON.stringify(reasonsToRemove)} from cache ${cache.ID}`);
+            }
             // Keep only the reasons that are NOT being shuffled
             cache.Reasons = cache.Reasons.filter(r => !reasonsToRemove.includes(r));
-            // If no reasons are left, remove it from the selected set
+            // If no reasons are left, it's no longer a "selected" cache for any reason.
             if (cache.Reasons.length === 0) {
                 selectedIDs.delete(cache.ID);
             }
         }
     });
-
+    
     // 4. Re-run the selection for the targeted reasons, always using the full data pool.
     collectSelections(allData, reasonsToShuffle);
 
     // 5. Update UI
     const newDataToDisplay = allData.filter(r => r.Reasons?.length > 0);
-    console.log(`[Shuffle] New selection contains ${newDataToDisplay.length} caches.`);
+    logger.debug(`[Shuffle] New selection contains ${newDataToDisplay.length} caches.`);
     displayFullTable(allData, newDataToDisplay, true);
     visualizeMap(allData, newDataToDisplay);
 
     // 6. Reapply filters after a short delay to ensure DataTable is ready
     if (currentFilters.length > 0) {
         setTimeout(() => {
-            console.log('[Shuffle] Re-applying filters...');
+            logger.debug('[Shuffle] Re-applying filters...');
             const newTable = $('#allCaches').DataTable();
             // Clear any existing search
             newTable.columns().search('').draw();
@@ -706,7 +725,7 @@ async function shuffleCaches(isFilteredShuffle) {
                 newTable.column(filter.index).search(filter.search, true, false);
             });
             newTable.draw();
-            console.log('[Shuffle] Filters reapplied.');
+            logger.debug('[Shuffle] Filters reapplied.');
         }, 100); // A short delay is often sufficient
     }
 }

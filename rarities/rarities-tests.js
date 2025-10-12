@@ -5,7 +5,7 @@
  * @param {string} resultsContainerId - The ID of the DOM element to render results into.
  * @param {Function} renderFn - A function to render a single test case result.
  */
-function runTestSuite(testCases, executionFn, resultsContainerId, renderFn) {
+async function runTestSuite(testCases, executionFn, resultsContainerId, renderFn) {
     const container = document.getElementById(resultsContainerId);
     if (!container) {
         console.error(`Test results container with ID "${resultsContainerId}" not found.`);
@@ -16,9 +16,10 @@ function runTestSuite(testCases, executionFn, resultsContainerId, renderFn) {
     let passes = 0;
     let fails = 0;
 
-    testCases.forEach(test => {
+    for (const test of testCases) {
         try {
-            const { passed, actual } = executionFn(test);
+            // Await the execution function to handle async tests
+            const { passed, actual } = await executionFn(test);
             if (passed) {
                 passes++;
             } else {
@@ -30,7 +31,7 @@ function runTestSuite(testCases, executionFn, resultsContainerId, renderFn) {
             console.error(`Error in test "${test.name}":`, error);
             renderFn(container, test, false, `Execution Error: ${error.message}`);
         }
-    });
+    }
 
     const summary = document.createElement('div');
     summary.className = `summary ${fails === 0 ? 'pass' : 'fail'}`;
@@ -101,7 +102,7 @@ const mockCaches = [
 
 document.addEventListener('DOMContentLoaded', runAllTests);
 
-function runAllTests() {
+async function runAllTests() {
     // Mock Math.random to be predictable for tests
     let seed = 0.5;
     Math.random = function() { return seed; };
@@ -109,7 +110,7 @@ function runAllTests() {
     runUtilityFunctionTests();
     runGetExtremeTests();
     runCollectSelectionsTests();
-    runShuffleTests();
+    await runShuffleTests(); // This suite is now async
 }
 
 function runUtilityFunctionTests() {
@@ -255,12 +256,14 @@ function runCollectSelectionsTests() {
 }
 
 
-function runShuffleTests() {
+async function runShuffleTests() {
     const getTestData = () => JSON.parse(JSON.stringify(mockCaches)).map(c => ({ ...c, Hidden: new Date(c.Hidden), Reasons: [] }));
 
     // Mock the global functions and objects that shuffleCaches depends on
     const mockDependencies = (highlightedRowData = null, filteredData = null) => {
-        const mockApi = {
+        // This is a more realistic mock of the DataTables API chain.
+        // It needs to be a function that returns the mock API object.
+        window.jQuery.fn.DataTable = () => ({
             rows: (selector) => {
                 if (selector === '.row-highlight') {
                     return { data: () => [highlightedRowData] };
@@ -269,15 +272,27 @@ function runShuffleTests() {
                 return { data: () => ({ toArray: () => filteredData || allData.map(c => [c.ID]) }) };
             },
             columns: () => ({
-                every: (callback) => {
-                    // Simulate no filters for simplicity in mock
-                    callback({ search: () => '' });
+                every: function(callback) {
+                    // Simulate iterating over columns. The key is to call the callback
+                    // with the correct 'this' context, which is a mock column object.
+                    const mockColumnAPI = {
+                        search: () => '', // Simulate no active search
+                        index: () => 0   // Simulate a column index
+                    };
+                    callback.call(mockColumnAPI);
                 },
-                search: () => ({ draw: () => {} }), // Mock chaining
+                search: function() {
+                    // Return a chainable object that has a draw method
+                    return { draw: () => {} };
+                }
             }),
-        };
-        // Mock DataTable API
-        window.jQuery.fn.DataTable = () => mockApi;
+            column: () => ({
+                search: function() {
+                    // Return a chainable object that has a draw method
+                    return { draw: () => {} };
+                }
+            }),
+        });
 
         // Mock UI update functions to prevent errors and track calls
         window.displayFullTable = jest.fn();
@@ -297,7 +312,7 @@ function runShuffleTests() {
         {
             name: "Full Shuffle changes selection",
             description: "When multiple candidates exist, a full shuffle should pick a different one.",
-            setup: () => {
+            setup: async () => {
                 allData = getTestData();
                 mockDependencies();
 
@@ -309,7 +324,7 @@ function runShuffleTests() {
 
                 // Change seed for shuffle (seed 0.6 picks GC3 for max FP)
                 Math.random = () => 0.6;
-                window.shuffleCaches(false); // Run full shuffle
+                await window.shuffleCaches(false); // Run full shuffle and wait for it
 
                 const finalSelection = allData.find(c => c.Reasons.includes('Listan suosituin')).ID;
                 return finalSelection;
@@ -320,22 +335,23 @@ function runShuffleTests() {
         {
             name: "Single-Item Shuffle works correctly",
             description: "Shuffling a selected item should only re-run selection for that item's reasons.",
-            setup: () => {
-                allData = getTestData();
+            setup: async () => {
+                const testData = getTestData();
+                allData = testData; // Ensure the global allData is the one we're working with
                 // Highlight GC2, which was selected for 'Listan suosituin'
                 mockDependencies([['GC2']]);
 
                 // Initial selection
                 Math.random = () => 0.4; // Picks GC2 for 'suosituin', GC5 for 'vanhin'
-                collectSelections(allData);
-                const oldestBefore = allData.find(c => c.Reasons.includes('Listan vanhin')).ID;
+                collectSelections(testData);
+                const oldestBefore = testData.find(c => c.Reasons.includes('Listan vanhin')).ID;
 
                 // Shuffle with a seed that would pick GC3 for 'suosituin' but GC6 for 'vanhin'
                 Math.random = () => 0.6;
-                window.shuffleCaches(false); // Run single-item shuffle
+                await window.shuffleCaches(false); // Run single-item shuffle and wait
 
-                const popularAfter = allData.find(c => c.Reasons.includes('Listan suosituin')).ID;
-                const oldestAfter = allData.find(c => c.Reasons.includes('Listan vanhin')).ID;
+                const popularAfter = testData.find(c => c.Reasons.includes('Listan suosituin')).ID;
+                const oldestAfter = testData.find(c => c.Reasons.includes('Listan vanhin')).ID;
 
                 // Check that 'suosituin' changed, but 'vanhin' did not.
                 return { popularChanged: popularAfter === 'GC3', oldestUnchanged: oldestAfter === oldestBefore };
@@ -346,7 +362,7 @@ function runShuffleTests() {
         {
             name: "Filtered Shuffle re-runs correct reasons",
             description: "Shuffle filtered should only re-run reasons from visible rows, preserving other selections.",
-            setup: () => {
+            setup: async () => {
                 allData = getTestData();
                 // Initial selection
                 Math.random = () => 0.4; // Picks GC2 for 'suosituin', GC5 for 'vanhin'
@@ -355,12 +371,12 @@ function runShuffleTests() {
                 assert(oldestBefore === 'GC5', "Oldest before should be GC5");
 
                 // Simulate filtering the table to only show the 'Listan suosituin' cache (GC2)
-                const filteredData = allData.filter(c => c.ID === 'GC2').map(c => [c.ID, 'name', 'type', 'size', 'diff', 'terr', 'country', 'region', 'county', 'date', 'finds', 'fp', 'elev', 'Listan suosituin']);
+                const filteredData = allData.filter(c => c.ID === 'GC2').map(c => [c.ID, c['Cache name'], c.Type, c.Size, c.Difficulty, c.Terrain, c.Country, c.Region, c.County, c.Hidden.toISOString().split("T")[0], c.Finds, c.FP, c['Elevation (m)'], c.Reasons.join(', ')]);
                 mockDependencies(null, filteredData);
 
                 // Shuffle with a seed that would pick GC3 for 'suosituin' and GC6 for 'vanhin'
                 Math.random = () => 0.6;
-                window.shuffleCaches(true); // Run filtered shuffle
+                await window.shuffleCaches(true); // Run filtered shuffle and wait
 
                 const popularAfter = allData.find(c => c.Reasons.includes('Listan suosituin')).ID;
                 const oldestAfter = allData.find(c => c.Reasons.includes('Listan vanhin')).ID;
@@ -373,8 +389,8 @@ function runShuffleTests() {
         }
     ];
 
-    runTestSuite(testCases, (test) => {
-        const actual = test.setup();
+    await runTestSuite(testCases, async (test) => {
+        const actual = await test.setup();
         const passed = test.validator(actual);
 
         return { passed, actual: JSON.stringify(actual) };
