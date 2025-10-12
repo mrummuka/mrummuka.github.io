@@ -89,6 +89,11 @@ SOFTWARE.
         /* Poistettu aiempi responsiivinen CSS, joka rikkoi DataTables-suodattimet */
         /* Taulukko on nyt vieritettävissä sivusuunnassa DataTablesin scrollX-asetuksella */
 
+        /* For highlighting table row */
+        .row-highlight {
+            background-color: #ffeb3b !important; /* A bright yellow */
+        }
+
     </style>
 </head>
 
@@ -238,7 +243,7 @@ SOFTWARE.
         const ATTRIBUTE_URL = "https://github.com/cgeo/cgeo/tree/master/main/project/attributes/svgs/";
         let dtTypeFilter = null; // null means no filter
         let dtSizeFilter = null;
-        let allData = [], selectedIDs = new Set(), map;
+        let allData = [], selectedIDs = new Set(), map, markerLayer, markerMap = {};
 
         // Convert coordinate string to decimal format
         // Format: "N 60° 10.123", "E 24° 56.789"
@@ -701,16 +706,18 @@ SOFTWARE.
         // allRows: array of all cache data, selectedRows: array of selected cache data
         function visualizeMap(allRows, selectedRows) {
             if (map) map.remove();
+            markerMap = {}; // Clear marker references
 
             map = L.map('map');
             L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
                 attribution: '&copy; OpenStreetMap contributors'
             }).addTo(map);
 
-            // Always show all waypoints using markerClusterGroup
             const rowsToShow = selectedRows;
             const bounds = L.latLngBounds([]);
-            const markers = L.markerClusterGroup();
+            markerLayer = L.markerClusterGroup();
+
+            let highlightedMarker = null;
 
             rowsToShow.forEach(row => {
                 if (!row.Latitude_dd || !row.Longitude_dd) return;
@@ -747,11 +754,30 @@ SOFTWARE.
                     </div>
                 `;
                 const marker = L.marker([row.Latitude_dd, row.Longitude_dd], markerOptions).bindPopup(popupHtml);
-                markers.addLayer(marker);
+                
+                // Store marker for table->map interaction
+                markerMap[row.ID] = marker;
+
+                // Add map->table interaction
+                marker.on('click', function() {
+                    const table = $('#allCaches').DataTable();
+                    // Clear previous highlight
+                    table.rows('.row-highlight').nodes().to$().removeClass('row-highlight');
+                    
+                    const rowNode = table.rows().nodes().to$().filter(`:has(td:first-child:contains(${row.ID}))`);
+                    if (rowNode.length) {
+                        rowNode.addClass('row-highlight');
+                        // Scroll to the row
+                        $('html, body').animate({
+                            scrollTop: rowNode.offset().top - 150 // Adjust offset as needed
+                        }, 500);
+                    }
+                });
+                markerLayer.addLayer(marker);
                 bounds.extend([row.Latitude_dd, row.Longitude_dd]);
             });
 
-            map.addLayer(markers);
+            map.addLayer(markerLayer);
 
             if (bounds.isValid()) {
                 map.fitBounds(bounds);
@@ -966,6 +992,26 @@ SOFTWARE.
                     }
                 });
 
+                // Add table->map interaction
+                $('#allCaches tbody').on('click', 'tr', function () {
+                    const table = $('#allCaches').DataTable();
+                    const data = table.row(this).data();
+                    if (!data) return;
+
+                    const cacheId = data[0]; // Assuming ID is the first column
+                    const marker = markerMap[cacheId];
+
+                    if (marker) {
+                        // Highlight row
+                        table.rows('.row-highlight').nodes().to$().removeClass('row-highlight');
+                        $(this).addClass('row-highlight');
+
+                        markerLayer.zoomToShowLayer(marker, () => {
+                            marker.openPopup();
+                        });
+                    }
+                });
+
                 // Päivitä kartta aina kun taulukkoa filtteröidään
                 table.on('draw', function () {
                     const filteredData = table.rows({ search: 'applied' }).data().toArray();
@@ -981,6 +1027,8 @@ SOFTWARE.
             const nsGpx = "http://www.topografix.com/GPX/1/0";
             const nsGroundspeak = "http://www.groundspeak.com/cache/1/0/1";
             const nsGSAK = "http://www.gsak.net/xmlv1/6";
+            const nsxsi = "http://www.w3.org/2001/XMLSchema-instance";
+
 
             const table = $('#allCaches').DataTable();
             if (!table) {
@@ -995,6 +1043,8 @@ SOFTWARE.
             gpx.setAttribute("creator", "Geokätköanalyysi");
             gpx.setAttribute("xmlns", nsGpx);
             gpx.setAttribute("xmlns:groundspeak", nsGroundspeak);
+            gpx.setAttribute("xmlns:xsi", nsxsi);
+            gpx.setAttribute("xsi:schemaLocation", `${nsGpx} ${nsGpx}/gpx.xsd ${nsGroundspeak} ${nsGroundspeak}/cache.xsd`);
             gpx.setAttribute("xmlns:gsak", nsGSAK);
 
 
